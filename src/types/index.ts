@@ -165,6 +165,7 @@ export interface ApiError {
 export interface AgentConfig {
   // API Keys
   openrouterApiKey: string;
+  geminiApiKey: string;
   seedstrApiKey?: string;
   tavilyApiKey?: string;
 

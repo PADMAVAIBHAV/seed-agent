@@ -1,5 +1,5 @@
-import { mkdirSync, writeFileSync, existsSync, rmSync, readdirSync, statSync, readFileSync } from "fs";
-import { join, dirname, basename } from "path";
+import { mkdirSync, writeFileSync, existsSync, rmSync, readFileSync } from "fs";
+import { join, dirname, basename, resolve, sep } from "path";
 import { tmpdir } from "os";
 import { randomUUID } from "crypto";
 import archiver from "archiver";
@@ -46,11 +46,20 @@ export class ProjectBuilder {
    */
   addFile(relativePath: string, content: string): void {
     // Normalize path separators
-    const normalizedPath = relativePath.replace(/\\/g, "/");
+    const normalizedPath = relativePath.replace(/\\/g, "/").replace(/^\/+/, "");
+    if (!normalizedPath || normalizedPath.includes("..")) {
+      throw new Error(`Unsafe file path: ${relativePath}`);
+    }
+
+    const fullPath = resolve(this.projectDir, normalizedPath);
+    const projectRoot = this.projectDir.endsWith(sep) ? this.projectDir : `${this.projectDir}${sep}`;
+    if (!fullPath.startsWith(projectRoot)) {
+      throw new Error(`Path escapes project root: ${relativePath}`);
+    }
+
     this.files.set(normalizedPath, content);
     
     // Write file to disk
-    const fullPath = join(this.projectDir, normalizedPath);
     const dir = dirname(fullPath);
     
     if (!existsSync(dir)) {

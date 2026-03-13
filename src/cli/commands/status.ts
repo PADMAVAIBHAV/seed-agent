@@ -20,17 +20,17 @@ export async function statusCommand(): Promise<void> {
 
   const configErrors = validateConfig(config);
 
-  // OpenRouter API Key
-  if (config.openrouterApiKey) {
+  // Gemini API Key
+  if (config.geminiApiKey) {
     console.log(
       chalk.green("  ✓ ") +
-        chalk.white("OpenRouter API Key: ") +
-        chalk.gray(config.openrouterApiKey.substring(0, 20) + "...")
+        chalk.white("Gemini API Key: ") +
+        chalk.gray(config.geminiApiKey.substring(0, 20) + "...")
     );
   } else {
     console.log(
       chalk.red("  ✗ ") +
-        chalk.white("OpenRouter API Key: ") +
+        chalk.white("Gemini API Key: ") +
         chalk.red("Not set")
     );
   }

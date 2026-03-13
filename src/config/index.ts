@@ -39,6 +39,7 @@ export function getConfig(): AgentConfig {
   return {
     // API Keys
     openrouterApiKey: process.env.OPENROUTER_API_KEY || "",
+    geminiApiKey: process.env.GEMINI_API_KEY || "",
     seedstrApiKey: process.env.SEEDSTR_API_KEY || stored.seedstrApiKey || "",
     tavilyApiKey: process.env.TAVILY_API_KEY || "",
 
@@ -49,7 +50,7 @@ export function getConfig(): AgentConfig {
       (process.env.WALLET_TYPE as WalletType) || stored.walletType || "ETH",
 
     // Model settings
-    model: process.env.OPENROUTER_MODEL || "anthropic/claude-sonnet-4",
+    model: process.env.GEMINI_MODEL || "gemini-1.5-flash",
     maxTokens: parseInt(process.env.MAX_TOKENS || "4096", 10),
     temperature: parseFloat(process.env.TEMPERATURE || "0.7"),
 
@@ -93,8 +94,8 @@ export function getConfig(): AgentConfig {
 export function validateConfig(config: AgentConfig): string[] {
   const errors: string[] = [];
 
-  if (!config.openrouterApiKey) {
-    errors.push("OPENROUTER_API_KEY is required");
+  if (!config.geminiApiKey) {
+    errors.push("GEMINI_API_KEY is required");
   }
 
   if (!config.walletAddress) {

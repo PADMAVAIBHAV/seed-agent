@@ -16,7 +16,8 @@ const MODEL_COSTS: Record<string, { input: number; output: number }> = {
   "openai/gpt-4o-mini": { input: 0.15, output: 0.6 },
   "meta-llama/llama-3.1-405b-instruct": { input: 3.0, output: 3.0 },
   "meta-llama/llama-3.1-70b-instruct": { input: 0.5, output: 0.5 },
-  "google/gemini-pro-1.5": { input: 2.5, output: 7.5 },
+  "gemini-1.5-flash": { input: 0.35, output: 1.05 },
+  "gemini-1.5-pro": { input: 3.5, output: 10.5 },
   default: { input: 1.0, output: 3.0 },
 };
 
@@ -39,8 +40,8 @@ export async function simulateCommand(options: SimulateOptions): Promise<void> {
 
   const config = getConfig();
 
-  if (!config.openrouterApiKey) {
-    console.log(chalk.red("✗ OPENROUTER_API_KEY is required in your .env file"));
+  if (!config.geminiApiKey) {
+    console.log(chalk.red("✗ GEMINI_API_KEY is required in your .env file"));
     process.exit(1);
   }
 

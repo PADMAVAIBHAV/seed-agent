@@ -20,7 +20,7 @@ describe("Config", () => {
 
       const config = getConfig();
 
-      expect(config.model).toBe("anthropic/claude-sonnet-4");
+      expect(config.model).toBe("gemini-1.5-flash");
       expect(config.maxTokens).toBe(4096);
       expect(config.temperature).toBe(0.7);
       expect(config.minBudget).toBe(0.5);
@@ -30,7 +30,7 @@ describe("Config", () => {
     });
 
     it("should use environment variables", () => {
-      process.env.OPENROUTER_MODEL = "gpt-4";
+      process.env.GEMINI_MODEL = "gemini-1.5-pro";
       process.env.MAX_TOKENS = "8000";
       process.env.TEMPERATURE = "0.5";
       process.env.MIN_BUDGET = "1.00";
@@ -38,7 +38,7 @@ describe("Config", () => {
 
       const config = getConfig();
 
-      expect(config.model).toBe("gpt-4");
+      expect(config.model).toBe("gemini-1.5-pro");
       expect(config.maxTokens).toBe(8000);
       expect(config.temperature).toBe(0.5);
       expect(config.minBudget).toBe(1.0);
@@ -72,27 +72,24 @@ describe("Config", () => {
       expect(errors).toHaveLength(0);
     });
 
-    it("should require OPENROUTER_API_KEY", () => {
-      process.env.OPENROUTER_API_KEY = "";
+    it("should require GEMINI_API_KEY", () => {
+      process.env.GEMINI_API_KEY = "";
 
       const config = getConfig();
       const errors = validateConfig(config);
 
-      expect(errors).toContain("OPENROUTER_API_KEY is required");
+      expect(errors).toContain("GEMINI_API_KEY is required");
     });
 
-    it("should require SOLANA_WALLET_ADDRESS", () => {
-      // Delete the env var to test validation
+    it("should require WALLET_ADDRESS", () => {
+      delete process.env.WALLET_ADDRESS;
       delete process.env.SOLANA_WALLET_ADDRESS;
 
       const config = getConfig();
-      // Note: If there's a stored wallet from registration, this test may pass
-      // because config falls back to stored.walletAddress
-      // We're testing that an empty string triggers the validation
-      const testConfig = { ...config, solanaWalletAddress: "" };
+      const testConfig = { ...config, walletAddress: "" };
       const errors = validateConfig(testConfig);
 
-      expect(errors).toContain("SOLANA_WALLET_ADDRESS is required");
+      expect(errors).toContain("WALLET_ADDRESS is required");
     });
   });
 });
