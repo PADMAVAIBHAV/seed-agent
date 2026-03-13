@@ -164,7 +164,10 @@ export interface ApiError {
 
 export interface AgentConfig {
   // API Keys
-  openrouterApiKey: string;
+  awsAccessKeyId: string;
+  awsSecretAccessKey: string;
+  awsRegion: string;
+  awsSessionToken?: string;
   seedstrApiKey?: string;
   tavilyApiKey?: string;
 

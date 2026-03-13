@@ -38,7 +38,10 @@ export function getConfig(): AgentConfig {
 
   return {
     // API Keys
-    openrouterApiKey: process.env.OPENROUTER_API_KEY || "",
+    awsAccessKeyId: process.env.AWS_ACCESS_KEY_ID || "",
+    awsSecretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || "",
+    awsRegion: process.env.AWS_REGION || "",
+    awsSessionToken: process.env.AWS_SESSION_TOKEN || "",
     seedstrApiKey: process.env.SEEDSTR_API_KEY || stored.seedstrApiKey || "",
     tavilyApiKey: process.env.TAVILY_API_KEY || "",
 
@@ -49,7 +52,7 @@ export function getConfig(): AgentConfig {
       (process.env.WALLET_TYPE as WalletType) || stored.walletType || "ETH",
 
     // Model settings
-    model: process.env.OPENROUTER_MODEL || "anthropic/claude-sonnet-4",
+    model: process.env.BEDROCK_MODEL_ID || "anthropic.claude-3-5-sonnet-20241022-v2:0",
     maxTokens: parseInt(process.env.MAX_TOKENS || "4096", 10),
     temperature: parseFloat(process.env.TEMPERATURE || "0.7"),
 
@@ -93,8 +96,16 @@ export function getConfig(): AgentConfig {
 export function validateConfig(config: AgentConfig): string[] {
   const errors: string[] = [];
 
-  if (!config.openrouterApiKey) {
-    errors.push("OPENROUTER_API_KEY is required");
+  if (!config.awsAccessKeyId) {
+    errors.push("AWS_ACCESS_KEY_ID is required");
+  }
+
+  if (!config.awsSecretAccessKey) {
+    errors.push("AWS_SECRET_ACCESS_KEY is required");
+  }
+
+  if (!config.awsRegion) {
+    errors.push("AWS_REGION is required");
   }
 
   if (!config.walletAddress) {
@@ -108,7 +119,7 @@ export function validateConfig(config: AgentConfig): string[] {
  * Check if the agent is registered
  */
 export function isRegistered(): boolean {
-  return !!configStore.get("seedstrApiKey");
+  return !!(process.env.SEEDSTR_API_KEY || configStore.get("seedstrApiKey"));
 }
 
 /**

@@ -139,10 +139,19 @@ export async function registerCommand(options: RegisterOptions): Promise<void> {
     console.log(chalk.gray("  3. Run `npm run start` to start processing jobs"));
   } catch (error) {
     spinner.fail("Registration failed");
-    console.error(
-      chalk.red("\nError:"),
-      error instanceof Error ? error.message : "Unknown error"
-    );
+    const message = error instanceof Error ? error.message : "Unknown error";
+    console.error(chalk.red("\nError:"), message);
+
+    if (message.includes("wallet address already exists")) {
+      const hasEnvApiKey = !!getConfig().seedstrApiKey;
+      console.log(chalk.yellow("\nThis wallet is already registered on Seedstr."));
+      if (hasEnvApiKey) {
+        console.log(chalk.gray("Use the existing SEEDSTR_API_KEY from .env and run `npm run status`."));
+      } else {
+        console.log(chalk.gray("Add the existing agent's SEEDSTR_API_KEY to your .env, then run `npm run status`."));
+      }
+      console.log(chalk.gray("If you don't have that API key, use a different wallet to register a new agent."));
+    }
     process.exit(1);
   }
 }

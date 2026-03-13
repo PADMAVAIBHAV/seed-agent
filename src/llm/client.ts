@@ -1,4 +1,4 @@
-import { createOpenRouter } from "@openrouter/ai-sdk-provider";
+import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
 import { generateText, tool, CoreTool } from "ai";
 import { z } from "zod";
 import { getConfig } from "../config/index.js";
@@ -111,10 +111,10 @@ export interface GenerateOptions {
 }
 
 /**
- * OpenRouter LLM Client with built-in tool support
+ * Amazon Bedrock LLM Client with built-in tool support
  */
 export class LLMClient {
-  private openrouter: ReturnType<typeof createOpenRouter>;
+  private bedrock: ReturnType<typeof createAmazonBedrock>;
   private model: string;
   private maxTokens: number;
   private temperature: number;
@@ -122,12 +122,23 @@ export class LLMClient {
   constructor() {
     const config = getConfig();
 
-    if (!config.openrouterApiKey) {
-      throw new Error("OPENROUTER_API_KEY is required");
+    if (!config.awsAccessKeyId) {
+      throw new Error("AWS_ACCESS_KEY_ID is required");
     }
 
-    this.openrouter = createOpenRouter({
-      apiKey: config.openrouterApiKey,
+    if (!config.awsSecretAccessKey) {
+      throw new Error("AWS_SECRET_ACCESS_KEY is required");
+    }
+
+    if (!config.awsRegion) {
+      throw new Error("AWS_REGION is required");
+    }
+
+    this.bedrock = createAmazonBedrock({
+      accessKeyId: config.awsAccessKeyId,
+      secretAccessKey: config.awsSecretAccessKey,
+      sessionToken: config.awsSessionToken || undefined,
+      region: config.awsRegion,
     });
 
     this.model = config.model;
@@ -400,7 +411,7 @@ export class LLMClient {
 
     try {
       const result = await generateText({
-        model: this.openrouter(this.model),
+        model: this.bedrock(this.model),
         prompt,
         system: systemPrompt,
         maxTokens,
@@ -530,18 +541,138 @@ export class LLMClient {
    * Generate a response for a Seedstr job
    */
   async generateJobResponse(job: { prompt: string; budget: number }): Promise<string> {
-    const systemPrompt = `You are an AI agent participating in the Seedstr marketplace. Your task is to provide the best possible response to job requests.
+    const systemPrompt = `
+You are an autonomous AI software engineer participating in the Seedstr Blind Hackathon.
 
-Guidelines:
-- Be helpful, accurate, and thorough
-- Use tools when needed to get current information
-- Provide well-structured, clear responses
-- Be professional and concise
-- If you use web search, cite your sources
+Your objective is to generate the highest-quality functional solution to the job prompt.
+
+The judging system is an automated AI evaluator that scores submissions based on:
+
+1. Functionality
+2. Design quality
+3. Completeness
+4. Usability
+5. Speed of delivery
+
+Your response must therefore aim to maximize these criteria.
+
+You are not simply answering a prompt — you are designing and delivering a fully working solution.
+
+----------------------------
+
+THINKING PROCESS
+
+Before generating output:
+
+1. Analyze the job prompt carefully.
+2. Infer any missing requirements.
+3. Expand the idea into a complete product.
+4. Design the best possible implementation.
+
+If the prompt is vague, assume the requester wants a polished production-quality result.
+
+----------------------------
+
+WEB PROJECT REQUIREMENTS
+
+When generating web applications:
+
+Always produce a modern production-ready stack using:
+
+React + Tailwind CSS
+
+Include:
+
+• Responsive layout
+• Modern SaaS UI patterns
+• Hero section
+• Feature sections
+• Call-to-action areas
+• Navigation header
+• Footer
+• Animations and transitions
+• Dark mode support
+• Clean component structure
+• Modular reusable components
+
+Use professional design patterns including:
+
+• gradients
+• glassmorphism
+• soft shadows
+• modern typography
+• spacing systems
+• smooth micro-interactions
+
+Ensure the UI looks like a real startup landing page or SaaS product.
+
+----------------------------
+
+OUTPUT STRUCTURE
+
+If generating code, return a full project structure using JSON:
+
+{
+ "files":[
+   {"path":"src/App.tsx","content":"..."},
+   {"path":"src/components/Hero.tsx","content":"..."}
+ ]
+}
+
+Ensure:
+
+• valid syntax
+• no missing dependencies
+• realistic folder structure
+• clean readable code
+
+----------------------------
+
+QUALITY STANDARDS
+
+Your output should resemble work from a senior frontend engineer.
+
+Avoid:
+
+• placeholder text
+• incomplete sections
+• minimal demos
+
+Instead produce:
+
+• fully structured sections
+• realistic copy
+• visually impressive layouts
+
+----------------------------
+
+OPTIMIZATION
+
+The judging system favors:
+
+• visually appealing designs
+• well structured code
+• thoughtful features
+• polished UI
+
+Prioritize quality and completeness.
+
+----------------------------
+
+JOB CONTEXT
 
 Job Budget: $${job.budget.toFixed(2)} USD
-This indicates how much the requester values this task. Adjust your effort accordingly.`;
 
+A higher budget indicates a more valuable request and should receive a more detailed solution.
+
+----------------------------
+
+GOAL
+
+Deliver the best possible solution that would impress both developers and end users.
+
+Your output should feel like a real production-ready product.
+`;
     const result = await this.generate({
       prompt: job.prompt,
       systemPrompt,

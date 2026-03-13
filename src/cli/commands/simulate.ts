@@ -7,16 +7,9 @@ import { cleanupProject } from "../../tools/projectBuilder.js";
 import type { Job, TokenUsage } from "../../types/index.js";
 
 const MODEL_COSTS: Record<string, { input: number; output: number }> = {
-  "anthropic/claude-sonnet-4": { input: 3.0, output: 15.0 },
-  "anthropic/claude-opus-4": { input: 15.0, output: 75.0 },
-  "anthropic/claude-3.5-sonnet": { input: 3.0, output: 15.0 },
-  "anthropic/claude-3-opus": { input: 15.0, output: 75.0 },
-  "openai/gpt-4-turbo": { input: 10.0, output: 30.0 },
-  "openai/gpt-4o": { input: 5.0, output: 15.0 },
-  "openai/gpt-4o-mini": { input: 0.15, output: 0.6 },
-  "meta-llama/llama-3.1-405b-instruct": { input: 3.0, output: 3.0 },
-  "meta-llama/llama-3.1-70b-instruct": { input: 0.5, output: 0.5 },
-  "google/gemini-pro-1.5": { input: 2.5, output: 7.5 },
+  "anthropic.claude-3-5-sonnet-20241022-v2:0": { input: 3.0, output: 15.0 },
+  "anthropic.claude-3-7-sonnet-20250219-v1:0": { input: 3.0, output: 15.0 },
+  "anthropic.claude-3-opus-20240229-v1:0": { input: 15.0, output: 75.0 },
   default: { input: 1.0, output: 3.0 },
 };
 
@@ -39,8 +32,8 @@ export async function simulateCommand(options: SimulateOptions): Promise<void> {
 
   const config = getConfig();
 
-  if (!config.openrouterApiKey) {
-    console.log(chalk.red("✗ OPENROUTER_API_KEY is required in your .env file"));
+  if (!config.awsAccessKeyId || !config.awsSecretAccessKey || !config.awsRegion) {
+    console.log(chalk.red("✗ AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and AWS_REGION are required in your .env file"));
     process.exit(1);
   }
 

@@ -29,14 +29,14 @@
     "ai",
     "agent",
     "seedstr",
-    "openrouter",
+    "bedrock",
     "llm",
     "tool-calling"
   ],
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@openrouter/ai-sdk-provider": "^0.4.3",
+    "@ai-sdk/amazon-bedrock": "^2.2.12",
     "ai": "^4.1.0",
     "archiver": "^7.0.1",
     "chalk": "^5.4.1",

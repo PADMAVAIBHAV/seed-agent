@@ -20,17 +20,31 @@ export async function statusCommand(): Promise<void> {
 
   const configErrors = validateConfig(config);
 
-  // OpenRouter API Key
-  if (config.openrouterApiKey) {
+  // AWS Bedrock credentials
+  if (config.awsAccessKeyId) {
     console.log(
       chalk.green("  ✓ ") +
-        chalk.white("OpenRouter API Key: ") +
-        chalk.gray(config.openrouterApiKey.substring(0, 20) + "...")
+        chalk.white("AWS Access Key ID: ") +
+        chalk.gray(config.awsAccessKeyId.substring(0, 20) + "...")
     );
   } else {
     console.log(
       chalk.red("  ✗ ") +
-        chalk.white("OpenRouter API Key: ") +
+        chalk.white("AWS Access Key ID: ") +
+        chalk.red("Not set")
+    );
+  }
+
+  if (config.awsRegion) {
+    console.log(
+      chalk.green("  ✓ ") +
+        chalk.white("AWS Region: ") +
+        chalk.gray(config.awsRegion)
+    );
+  } else {
+    console.log(
+      chalk.red("  ✗ ") +
+        chalk.white("AWS Region: ") +
         chalk.red("Not set")
     );
   }

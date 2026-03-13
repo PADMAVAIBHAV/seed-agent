@@ -10,16 +10,9 @@ import type { Job, AgentEvent, TokenUsage, FileAttachment, WebSocketJobEvent } f
 
 // Approximate costs per 1M tokens for common models (input/output)
 const MODEL_COSTS: Record<string, { input: number; output: number }> = {
-  "anthropic/claude-sonnet-4": { input: 3.0, output: 15.0 },
-  "anthropic/claude-opus-4": { input: 15.0, output: 75.0 },
-  "anthropic/claude-3.5-sonnet": { input: 3.0, output: 15.0 },
-  "anthropic/claude-3-opus": { input: 15.0, output: 75.0 },
-  "openai/gpt-4-turbo": { input: 10.0, output: 30.0 },
-  "openai/gpt-4o": { input: 5.0, output: 15.0 },
-  "openai/gpt-4o-mini": { input: 0.15, output: 0.6 },
-  "meta-llama/llama-3.1-405b-instruct": { input: 3.0, output: 3.0 },
-  "meta-llama/llama-3.1-70b-instruct": { input: 0.5, output: 0.5 },
-  "google/gemini-pro-1.5": { input: 2.5, output: 7.5 },
+  "anthropic.claude-3-5-sonnet-20241022-v2:0": { input: 3.0, output: 15.0 },
+  "anthropic.claude-3-7-sonnet-20250219-v1:0": { input: 3.0, output: 15.0 },
+  "anthropic.claude-3-opus-20240229-v1:0": { input: 15.0, output: 75.0 },
   // Default fallback
   default: { input: 1.0, output: 3.0 },
 };
