@@ -84,6 +84,16 @@ export class AgentMonitorWsServer {
     });
 
     this.wss.on("error", (error) => {
+      const err = error as NodeJS.ErrnoException;
+      if (err.code === "EADDRINUSE") {
+        logger.warn(
+          `Monitoring WebSocket disabled: ${this.host}:${this.port} is already in use`
+        );
+        this.wss?.close();
+        this.wss = null;
+        return;
+      }
+
       logger.error("Monitoring WebSocket error:", error);
     });
   }

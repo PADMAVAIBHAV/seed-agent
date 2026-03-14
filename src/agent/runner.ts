@@ -5,57 +5,22 @@ import { SeedstrClient } from "../api/client.js";
 import { getLLMClient } from "../llm/client.js";
 import { getConfig, configStore } from "../config/index.js";
 import { logger } from "../utils/logger.js";
-import { cleanupProject } from "../tools/projectBuilder.js";
+import { buildProject, cleanupProject } from "../tools/projectBuilder.js";
 import { AgentMonitorWsServer } from "../monitoring/wsServer.js";
 import type {
   Job,
   AgentEvent,
-  TokenUsage,
-  FileAttachment,
   WebSocketJobEvent,
   AgentLifecycleEvent,
   AgentLifecycleEventName,
   DashboardControlAction,
 } from "../types/index.js";
 
-// Approximate costs per 1M tokens for common models (input/output)
-const MODEL_COSTS: Record<string, { input: number; output: number }> = {
-  "anthropic.claude-3-5-sonnet-20241022-v2:0": { input: 3.0, output: 15.0 },
-  "anthropic.claude-3-7-sonnet-20250219-v1:0": { input: 3.0, output: 15.0 },
-  "anthropic.claude-3-opus-20240229-v1:0": { input: 15.0, output: 75.0 },
-import { buildProject, cleanupProject } from "../tools/projectBuilder.js";
-import type { Job, AgentEvent, TokenUsage, FileAttachment, WebSocketJobEvent } from "../types/index.js";
-
-// Approximate costs per 1M tokens for common models (input/output)
-const MODEL_COSTS: Record<string, { input: number; output: number }> = {
-  "anthropic/claude-sonnet-4": { input: 3.0, output: 15.0 },
-  "anthropic/claude-opus-4": { input: 15.0, output: 75.0 },
-  "anthropic/claude-3.5-sonnet": { input: 3.0, output: 15.0 },
-  "anthropic/claude-3-opus": { input: 15.0, output: 75.0 },
-  "openai/gpt-4-turbo": { input: 10.0, output: 30.0 },
-  "openai/gpt-4o": { input: 5.0, output: 15.0 },
-  "openai/gpt-4o-mini": { input: 0.15, output: 0.6 },
-  "meta-llama/llama-3.1-405b-instruct": { input: 3.0, output: 3.0 },
-  "meta-llama/llama-3.1-70b-instruct": { input: 0.5, output: 0.5 },
-  "gemini-1.5-flash": { input: 0.35, output: 1.05 },
-  "gemini-1.5-pro": { input: 3.5, output: 10.5 },
-  // Default fallback
-  default: { input: 1.0, output: 3.0 },
-};
-
-function estimateCost(model: string, promptTokens: number, completionTokens: number): number {
-  const costs = MODEL_COSTS[model] || MODEL_COSTS.default;
-  const inputCost = (promptTokens / 1_000_000) * costs.input;
-  const outputCost = (completionTokens / 1_000_000) * costs.output;
-  return inputCost + outputCost;
-}
-
 interface TypedEventEmitter {
   on(event: "event", listener: (event: AgentEvent) => void): this;
   emit(event: "event", data: AgentEvent): boolean;
 }
 
-// Persistent storage for processed jobs
 const jobStore = new Conf<{ processedJobs: string[] }>({
   projectName: "seed-agent",
   projectVersion: "1.0.0",
@@ -65,10 +30,6 @@ const jobStore = new Conf<{ processedJobs: string[] }>({
   },
 });
 
-/**
- * Main agent runner that polls for jobs and processes them.
- * Supports v2 API with WebSocket (Pusher) for real-time job notifications.
- */
 export class AgentRunner extends EventEmitter implements TypedEventEmitter {
   private client: SeedstrClient;
   private running = false;
@@ -93,40 +54,26 @@ export class AgentRunner extends EventEmitter implements TypedEventEmitter {
   constructor() {
     super();
     this.client = new SeedstrClient();
-
-    // Load previously processed jobs from persistent storage
     const stored = jobStore.get("processedJobs") || [];
     this.processedJobs = new Set(stored);
     logger.debug(`Loaded ${this.processedJobs.size} previously processed jobs`);
   }
 
-  /**
-   * Mark a job as processed and persist to storage
-   */
   private markJobProcessed(jobId: string): void {
     this.processedJobs.add(jobId);
 
-    // Keep only the last 1000 job IDs to prevent unlimited growth
     const jobArray = Array.from(this.processedJobs);
     if (jobArray.length > 1000) {
-      const trimmed = jobArray.slice(-1000);
-      this.processedJobs = new Set(trimmed);
+      this.processedJobs = new Set(jobArray.slice(-1000));
     }
 
-    // Persist to storage
     jobStore.set("processedJobs", Array.from(this.processedJobs));
   }
 
-  /**
-   * Emit a typed event
-   */
   private emitEvent(event: AgentEvent): void {
     this.emit("event", event);
   }
 
-  /**
-   * Emit a dashboard-friendly lifecycle event and broadcast it to monitor clients.
-   */
   private emitLifecycleEvent(type: AgentLifecycleEventName, payload?: Record<string, unknown>): void {
     const event: AgentLifecycleEvent = {
       type,
@@ -155,24 +102,10 @@ export class AgentRunner extends EventEmitter implements TypedEventEmitter {
     }
   };
 
-  // ─────────────────────────────────────────
-  // WebSocket (Pusher) connection
-  // ─────────────────────────────────────────
-
-  /**
-   * Connect to Pusher for real-time job notifications.
-   * Falls back to polling-only if Pusher is not configured.
-   */
   private connectWebSocket(): void {
     const config = getConfig();
 
-    if (!config.useWebSocket) {
-      logger.info("WebSocket disabled by config, using polling only");
-      return;
-    }
-
-    if (!config.pusherKey) {
-      logger.warn("PUSHER_KEY not set — WebSocket disabled, falling back to polling");
+    if (!config.useWebSocket || !config.pusherKey) {
       return;
     }
 
@@ -185,7 +118,6 @@ export class AgentRunner extends EventEmitter implements TypedEventEmitter {
     try {
       this.pusher = new PusherClient(config.pusherKey, {
         cluster: config.pusherCluster,
-        // Auth endpoint for private channels
         channelAuthorization: {
           endpoint: `${config.seedstrApiUrlV2}/pusher/auth`,
           transport: "ajax",
@@ -195,86 +127,65 @@ export class AgentRunner extends EventEmitter implements TypedEventEmitter {
         },
       });
 
-      // Connection state handlers
       this.pusher.connection.bind("connected", () => {
         this.wsConnected = true;
         this.emitEvent({ type: "websocket_connected" });
-        logger.info("WebSocket connected to Pusher");
       });
 
       this.pusher.connection.bind("disconnected", () => {
         this.wsConnected = false;
         this.emitEvent({ type: "websocket_disconnected", reason: "disconnected" });
-        logger.warn("WebSocket disconnected");
       });
 
-      this.pusher.connection.bind("error", (err: unknown) => {
+      this.pusher.connection.bind("error", () => {
         this.wsConnected = false;
-        logger.error("WebSocket error:", err);
         this.emitEvent({ type: "websocket_disconnected", reason: "error" });
       });
 
-      // Subscribe to the agent's private channel
       const channel = this.pusher.subscribe(`private-agent-${agentId}`);
-
-      channel.bind("pusher:subscription_succeeded", () => {
-        logger.info(`Subscribed to private-agent-${agentId}`);
-      });
-
-      channel.bind("pusher:subscription_error", (err: unknown) => {
-        logger.error("Channel subscription error:", err);
-        logger.warn("Will rely on polling for job discovery");
-      });
-
-      // Listen for new job notifications
       channel.bind("job:new", (data: WebSocketJobEvent) => {
-        logger.info(`[WS] New job received: ${data.jobId} ($${data.budget})`);
         this.emitEvent({ type: "websocket_job", jobId: data.jobId });
         this.handleWebSocketJob(data);
       });
-    } catch (err) {
-      logger.error("Failed to initialize Pusher:", err);
-      logger.warn("Falling back to polling only");
+    } catch (error) {
+      logger.error("Failed to initialize Pusher:", error);
     }
   }
 
-  /**
-   * Handle a job received via WebSocket.
-   * Fetches full job details from v2 API and processes it.
-   */
+  private disconnectWebSocket(): void {
+    if (this.pusher) {
+      this.pusher.disconnect();
+      this.pusher = null;
+      this.wsConnected = false;
+    }
+  }
+
   private async handleWebSocketJob(event: WebSocketJobEvent): Promise<void> {
     const config = getConfig();
 
     if (this.pollingPaused) {
-      logger.debug(`[WS] Polling is paused, ignoring job ${event.jobId}`);
       return;
     }
 
-    // Skip if already processing or processed
     if (this.processingJobs.has(event.jobId) || this.processedJobs.has(event.jobId)) {
       return;
     }
 
-    // Check capacity
     if (this.processingJobs.size >= config.maxConcurrentJobs) {
-      logger.debug(`[WS] At capacity, skipping job ${event.jobId}`);
       return;
     }
 
-    // Check minimum budget (use budgetPerAgent for swarm, otherwise full budget)
     const effectiveBudget = event.jobType === "SWARM" && event.budgetPerAgent
       ? event.budgetPerAgent
       : event.budget;
 
     if (effectiveBudget < config.minBudget) {
-      logger.debug(`[WS] Job ${event.jobId} budget $${effectiveBudget} below minimum $${config.minBudget}`);
       this.markJobProcessed(event.jobId);
       this.stats.jobsSkipped++;
       return;
     }
 
     try {
-      // Fetch full job details
       const job = await this.client.getJobV2(event.jobId);
       this.emitLifecycleEvent("job:detected", {
         jobId: job.id,
@@ -283,11 +194,9 @@ export class AgentRunner extends EventEmitter implements TypedEventEmitter {
       });
       this.emitEvent({ type: "job_found", job });
 
-      // For SWARM jobs, accept first then process
       if (job.jobType === "SWARM") {
         await this.acceptAndProcessSwarmJob(job);
       } else {
-        // STANDARD job — process directly (same as v1)
         this.processJob(job).catch((error) => {
           this.emitEvent({
             type: "error",
@@ -302,27 +211,8 @@ export class AgentRunner extends EventEmitter implements TypedEventEmitter {
     }
   }
 
-  /**
-   * Disconnect WebSocket
-   */
-  private disconnectWebSocket(): void {
-    if (this.pusher) {
-      this.pusher.disconnect();
-      this.pusher = null;
-      this.wsConnected = false;
-    }
-  }
-
-  // ─────────────────────────────────────────
-  // Lifecycle
-  // ─────────────────────────────────────────
-
-  /**
-   * Start the agent runner
-   */
   async start(): Promise<void> {
     if (this.running) {
-      logger.warn("Agent is already running");
       return;
     }
 
@@ -344,35 +234,30 @@ export class AgentRunner extends EventEmitter implements TypedEventEmitter {
       this.monitorServer.setPaused(false);
     }
 
-    // Connect WebSocket for real-time job notifications
     this.connectWebSocket();
-
-    // Start polling loop (always runs as fallback, slower when WS is active)
     await this.poll();
   }
 
-  /**
-   * Stop the agent runner
-   */
   async stop(): Promise<void> {
     this.running = false;
     this.pollingPaused = false;
+
     if (this.pollTimer) {
       clearTimeout(this.pollTimer);
       this.pollTimer = null;
     }
+
     this.disconnectWebSocket();
+
     if (this.monitorServer) {
       this.monitorServer.setOnline(false);
       this.monitorServer.stop();
       this.monitorServer = null;
     }
+
     this.emitEvent({ type: "shutdown" });
   }
 
-  /**
-   * Pause polling so the agent does not fetch new jobs until resumed.
-   */
   pausePolling(): void {
     this.pollingPaused = true;
     if (this.pollTimer) {
@@ -380,45 +265,27 @@ export class AgentRunner extends EventEmitter implements TypedEventEmitter {
       this.pollTimer = null;
     }
     this.monitorServer?.setPaused(true);
-    logger.info("Polling paused");
   }
 
-  /**
-   * Resume polling loop after a pause.
-   */
   resumePolling(): void {
-    if (!this.running) {
-      return;
-    }
-    if (!this.pollingPaused) {
+    if (!this.running || !this.pollingPaused) {
       return;
     }
 
     this.pollingPaused = false;
     this.monitorServer?.setPaused(false);
-    logger.info("Polling resumed");
     void this.poll();
   }
 
-  /**
-   * Restart the runner while preserving process state.
-   */
   async restart(): Promise<void> {
-    logger.info("Restarting agent...");
     await this.stop();
     await this.start();
   }
 
-  // ─────────────────────────────────────────
-  // Polling (fallback / supplement to WebSocket)
-  // ─────────────────────────────────────────
-
-  /**
-   * Poll for new jobs using v2 API
-   */
   private async poll(): Promise<void> {
-    if (!this.running) return;
-    if (this.pollingPaused) return;
+    if (!this.running || this.pollingPaused) {
+      return;
+    }
 
     const config = getConfig();
 
@@ -428,23 +295,17 @@ export class AgentRunner extends EventEmitter implements TypedEventEmitter {
         activeJobs: this.processingJobs.size,
       });
 
-      // Use v2 API for job listing (skill-matched)
       const response = await this.client.listJobsV2(20, 0);
-      const jobs = response.jobs;
 
-      // Filter and process new jobs
-      for (const job of jobs) {
-        // Skip if already processing or processed
+      for (const job of response.jobs) {
         if (this.processingJobs.has(job.id) || this.processedJobs.has(job.id)) {
           continue;
         }
 
-        // Check if we're at capacity
         if (this.processingJobs.size >= config.maxConcurrentJobs) {
           break;
         }
 
-        // Check minimum budget (use budgetPerAgent for swarm)
         const effectiveBudget = job.jobType === "SWARM" && job.budgetPerAgent
           ? job.budgetPerAgent
           : job.budget;
@@ -460,7 +321,6 @@ export class AgentRunner extends EventEmitter implements TypedEventEmitter {
           continue;
         }
 
-        // Process the job
         this.emitLifecycleEvent("job:detected", {
           jobId: job.id,
           budget: job.budget,
@@ -495,25 +355,14 @@ export class AgentRunner extends EventEmitter implements TypedEventEmitter {
       this.stats.errors++;
     }
 
-    // Schedule next poll — slower when WebSocket is active
-    if (this.running) {
+    if (this.running && !this.pollingPaused) {
       const interval = this.wsConnected
-        ? config.pollInterval * 3 * 1000  // 3x slower when WS is active (fallback only)
+        ? config.pollInterval * 3 * 1000
         : config.pollInterval * 1000;
-      if (!this.pollingPaused) {
-        this.pollTimer = setTimeout(() => this.poll(), interval);
-      }
+      this.pollTimer = setTimeout(() => this.poll(), interval);
     }
   }
 
-  // ─────────────────────────────────────────
-  // Swarm job handling
-  // ─────────────────────────────────────────
-
-  /**
-   * Accept a SWARM job first, then process it.
-   * If acceptance fails (job full, etc.), skip gracefully.
-   */
   private async acceptAndProcessSwarmJob(job: Job): Promise<void> {
     try {
       const result = await this.client.acceptJob(job.id);
@@ -524,58 +373,29 @@ export class AgentRunner extends EventEmitter implements TypedEventEmitter {
         budgetPerAgent: result.acceptance.budgetPerAgent,
       });
 
-      logger.info(
-        `Accepted swarm job ${job.id} — ${result.slotsRemaining} slots remaining, ` +
-        `deadline: ${result.acceptance.responseDeadline}`
-      );
-
-      // Now process the job (generate response and submit via v2)
       await this.processJob(job, true);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
 
       if (msg.includes("job_full") || msg.includes("All agent slots")) {
-        logger.debug(`Swarm job ${job.id} is full, skipping`);
         this.markJobProcessed(job.id);
         this.stats.jobsSkipped++;
-      } else if (msg.includes("already accepted")) {
-        logger.debug(`Already accepted swarm job ${job.id}`);
-      } else {
+      } else if (!msg.includes("already accepted")) {
         throw error;
       }
     }
   }
 
-  // ─────────────────────────────────────────
-  // Job processing
-  // ─────────────────────────────────────────
-
-  /**
-   * Process a single job using the Gemini code generation pipeline:
-   * Prompt Analyzer → Gemini Code Generator → AI Critic → Project Builder → Zip → Upload → Submit
-   * @param useV2Submit - If true, use v2 respond endpoint (for swarm auto-pay)
-   */
   private async processJob(job: Job, useV2Submit = false): Promise<void> {
     this.processingJobs.add(job.id);
     this.emitEvent({ type: "job_processing", job });
     this.emitLifecycleEvent("generation:start", { jobId: job.id });
     const generationStartedAt = Date.now();
-    const pipelineStart = Date.now();
 
     try {
       const llm = getLLMClient();
-
-      logger.info(`[Pipeline] Processing job ${job.id}: "${job.prompt.substring(0, 80)}..."`);
-
-      // Step 1: Generate project with Gemini
-      logger.info("[Pipeline] Step 1 — Generating code with Gemini...");
       const generated = await llm.generateCode(job.prompt);
-      logger.info(`[Pipeline] Generated ${generated.files.length} files`);
-
-      // Step 2: Run AI critic improvement pass
-      logger.info("[Pipeline] Step 2 — Running AI critic...");
       const improved = await llm.reviewAndImprove(generated);
-      logger.info(`[Pipeline] Critic returned ${improved.files.length} files`);
 
       this.emitEvent({
         type: "response_generated",
@@ -585,54 +405,19 @@ export class AgentRunner extends EventEmitter implements TypedEventEmitter {
       this.emitLifecycleEvent("generation:complete", {
         jobId: job.id,
         durationMs: Date.now() - generationStartedAt,
-        hasProjectBuild: !!result.projectBuild?.success,
+        hasProjectBuild: improved.files.length > 0,
       });
 
-      // Check if a project was built
-      if (result.projectBuild && result.projectBuild.success) {
-        const { projectBuild } = result;
-        this.emitLifecycleEvent("build:start", {
-          jobId: job.id,
-          fileCount: projectBuild.files.length,
-        });
+      this.emitLifecycleEvent("build:start", {
+        jobId: job.id,
+        fileCount: improved.files.length,
+      });
 
-        this.emitEvent({
-          type: "project_built",
-          job,
-          files: projectBuild.files,
-          zipPath: projectBuild.zipPath,
-        });
-        this.emitLifecycleEvent("build:complete", {
-          jobId: job.id,
-          fileCount: projectBuild.files.length,
-          zipPath: projectBuild.zipPath,
-        });
-
-        try {
-          // Upload the zip file
-          this.emitLifecycleEvent("zip:start", {
-            jobId: job.id,
-            zipPath: projectBuild.zipPath,
-          });
-          this.emitEvent({
-            type: "files_uploading",
-            job,
-            fileCount: 1,
-          });
-
-          const uploadedFiles = await this.client.uploadFile(projectBuild.zipPath);
-          this.emitLifecycleEvent("zip:complete", {
-            jobId: job.id,
-            fileName: uploadedFiles.name,
-            fileSize: uploadedFiles.size,
-          });
-      // Step 3: Build project files and create zip
-      logger.info("[Pipeline] Step 3 — Building project and creating zip...");
       const projectName = `job-${job.id.slice(0, 8)}`;
       const buildResult = await buildProject(projectName, improved.files);
 
       if (!buildResult.success) {
-        throw new Error(`Project build failed: ${buildResult.error}`);
+        throw new Error(`Project build failed: ${buildResult.error || "unknown error"}`);
       }
 
       this.emitEvent({
@@ -641,43 +426,31 @@ export class AgentRunner extends EventEmitter implements TypedEventEmitter {
         files: buildResult.files,
         zipPath: buildResult.zipPath,
       });
+      this.emitLifecycleEvent("build:complete", {
+        jobId: job.id,
+        fileCount: buildResult.files.length,
+        zipPath: buildResult.zipPath,
+      });
 
-      logger.info(`[Pipeline] Zip created: ${buildResult.zipPath} (${buildResult.totalSize} bytes)`);
-
-      // Step 4: Upload zip to Seedstr
-      logger.info("[Pipeline] Step 4 — Uploading zip...");
+      this.emitLifecycleEvent("zip:start", {
+        jobId: job.id,
+        zipPath: buildResult.zipPath,
+      });
       this.emitEvent({ type: "files_uploading", job, fileCount: 1 });
 
       const uploadedFile = await this.client.uploadFile(buildResult.zipPath);
+
       this.emitEvent({ type: "files_uploaded", job, files: [uploadedFile] });
+      this.emitLifecycleEvent("zip:complete", {
+        jobId: job.id,
+        fileName: uploadedFile.name,
+        fileSize: uploadedFile.size,
+      });
 
-          this.emitEvent({
-            type: "response_submitted",
-            job,
-            responseId: submitResult.response.id,
-            hasFiles: true,
-          });
-          this.emitLifecycleEvent("submission:success", {
-            jobId: job.id,
-            responseId: submitResult.response.id,
-            hasFiles: true,
-          });
-
-          // Cleanup project files
-          cleanupProject(projectBuild.projectDir, projectBuild.zipPath);
-        } catch (uploadError) {
-          // If upload fails, fall back to text-only response
-          logger.error("Failed to upload project files, submitting text-only response:", uploadError);
-      // Step 5: Submit response
-      logger.info("[Pipeline] Step 5 — Submitting response...");
       const responseContent = "Autonomous AI-generated web application responding to the prompt.";
-
-      const submitResult = await this.client.submitResponseV2(
-        job.id,
-        responseContent,
-        "FILE",
-        [uploadedFile]
-      );
+      const submitResult = useV2Submit
+        ? await this.client.submitResponseV2(job.id, responseContent, "FILE", [uploadedFile])
+        : await this.client.submitResponse(job.id, responseContent);
 
       this.emitEvent({
         type: "response_submitted",
@@ -685,25 +458,13 @@ export class AgentRunner extends EventEmitter implements TypedEventEmitter {
         responseId: submitResult.response.id,
         hasFiles: true,
       });
+      this.emitLifecycleEvent("submission:success", {
+        jobId: job.id,
+        responseId: submitResult.response.id,
+        hasFiles: true,
+      });
 
-      logger.info(`[Pipeline] Job ${job.id} completed successfully`);
-      logger.info(`[Pipeline] Total time: ${Date.now() - pipelineStart}ms${useV2Submit ? " (swarm)" : ""}`);
-
-        this.emitEvent({
-          type: "response_submitted",
-          job,
-          responseId: submitResult.response.id,
-          hasFiles: false,
-        });
-        this.emitLifecycleEvent("submission:success", {
-          jobId: job.id,
-          responseId: submitResult.response.id,
-          hasFiles: false,
-        });
-      }
-      // Cleanup
       cleanupProject(buildResult.projectDir, buildResult.zipPath);
-
       this.stats.jobsProcessed++;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -715,7 +476,6 @@ export class AgentRunner extends EventEmitter implements TypedEventEmitter {
           jobId: job.id,
           error: errorMessage,
         });
-        logger.error(`[Pipeline] Failed after ${Date.now() - pipelineStart}ms`);
         this.emitEvent({
           type: "error",
           message: `Error processing job ${job.id}: ${errorMessage}`,
@@ -729,9 +489,6 @@ export class AgentRunner extends EventEmitter implements TypedEventEmitter {
     }
   }
 
-  /**
-   * Get current stats
-   */
   getStats() {
     return {
       ...this.stats,
@@ -747,16 +504,10 @@ export class AgentRunner extends EventEmitter implements TypedEventEmitter {
     };
   }
 
-  /**
-   * Check if the agent is running
-   */
   isRunning(): boolean {
     return this.running;
   }
 
-  /**
-   * Check whether polling is currently paused.
-   */
   isPollingPaused(): boolean {
     return this.pollingPaused;
   }

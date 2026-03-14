@@ -55,7 +55,6 @@ export function getConfig(): AgentConfig {
 
     // Model settings
     model: process.env.BEDROCK_MODEL_ID || "anthropic.claude-3-5-sonnet-20241022-v2:0",
-    model: process.env.GEMINI_MODEL || "gemini-1.5-flash",
     maxTokens: parseInt(process.env.MAX_TOKENS || "4096", 10),
     temperature: parseFloat(process.env.TEMPERATURE || "0.7"),
 
@@ -114,8 +113,6 @@ export function validateConfig(config: AgentConfig): string[] {
 
   if (!config.awsRegion) {
     errors.push("AWS_REGION is required");
-  if (!config.geminiApiKey) {
-    errors.push("GEMINI_API_KEY is required");
   }
 
   if (!config.walletAddress) {
