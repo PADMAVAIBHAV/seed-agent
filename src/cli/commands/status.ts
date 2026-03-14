@@ -26,12 +26,6 @@ export async function statusCommand(): Promise<void> {
       chalk.green("  ✓ ") +
         chalk.white("AWS Access Key ID: ") +
         chalk.gray(config.awsAccessKeyId.substring(0, 20) + "...")
-  // Gemini API Key
-  if (config.geminiApiKey) {
-    console.log(
-      chalk.green("  ✓ ") +
-        chalk.white("Gemini API Key: ") +
-        chalk.gray(config.geminiApiKey.substring(0, 20) + "...")
     );
   } else {
     console.log(
@@ -51,7 +45,6 @@ export async function statusCommand(): Promise<void> {
     console.log(
       chalk.red("  ✗ ") +
         chalk.white("AWS Region: ") +
-        chalk.white("Gemini API Key: ") +
         chalk.red("Not set")
     );
   }

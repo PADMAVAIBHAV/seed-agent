@@ -54,8 +54,6 @@ export async function simulateCommand(options: SimulateOptions): Promise<void> {
 
   if (!config.awsAccessKeyId || !config.awsSecretAccessKey || !config.awsRegion) {
     console.log(chalk.red("✗ AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and AWS_REGION are required in your .env file"));
-  if (!config.geminiApiKey) {
-    console.log(chalk.red("✗ GEMINI_API_KEY is required in your .env file"));
     process.exit(1);
   }
 
