@@ -25,7 +25,7 @@ describe("SeedstrClient", () => {
       const result = await client.register("TestWalletAddress123456789012345678901234");
 
       expect(global.fetch).toHaveBeenCalledWith(
-        "https://seedstr.io/api/v1/register",
+        "https://www.seedstr.io/api/v1/register",
         expect.objectContaining({
           method: "POST",
           body: expect.stringContaining("TestWalletAddress"),
@@ -47,10 +47,10 @@ describe("SeedstrClient", () => {
         json: async () => mockResponse,
       } as Response);
 
-      await client.register("TestWalletAddress123456789012345678901234", "https://myagent.com");
+      await client.register("TestWalletAddress123456789012345678901234", "ETH", "https://myagent.com");
 
       expect(global.fetch).toHaveBeenCalledWith(
-        "https://seedstr.io/api/v1/register",
+        "https://www.seedstr.io/api/v1/register",
         expect.objectContaining({
           body: expect.stringContaining("https://myagent.com"),
         })

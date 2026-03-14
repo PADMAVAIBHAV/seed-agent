@@ -41,6 +41,8 @@
   "license": "MIT",
   "dependencies": {
     "@ai-sdk/amazon-bedrock": "^2.2.12",
+    "@google/generative-ai": "^0.24.1",
+    "@openrouter/ai-sdk-provider": "^0.4.3",
     "ai": "^4.1.0",
     "archiver": "^7.0.1",
     "chalk": "^5.4.1",

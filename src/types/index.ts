@@ -168,6 +168,8 @@ export interface AgentConfig {
   awsSecretAccessKey: string;
   awsRegion: string;
   awsSessionToken?: string;
+  openrouterApiKey: string;
+  geminiApiKey: string;
   seedstrApiKey?: string;
   tavilyApiKey?: string;
 

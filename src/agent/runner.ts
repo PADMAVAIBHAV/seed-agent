@@ -23,6 +23,22 @@ const MODEL_COSTS: Record<string, { input: number; output: number }> = {
   "anthropic.claude-3-5-sonnet-20241022-v2:0": { input: 3.0, output: 15.0 },
   "anthropic.claude-3-7-sonnet-20250219-v1:0": { input: 3.0, output: 15.0 },
   "anthropic.claude-3-opus-20240229-v1:0": { input: 15.0, output: 75.0 },
+import { buildProject, cleanupProject } from "../tools/projectBuilder.js";
+import type { Job, AgentEvent, TokenUsage, FileAttachment, WebSocketJobEvent } from "../types/index.js";
+
+// Approximate costs per 1M tokens for common models (input/output)
+const MODEL_COSTS: Record<string, { input: number; output: number }> = {
+  "anthropic/claude-sonnet-4": { input: 3.0, output: 15.0 },
+  "anthropic/claude-opus-4": { input: 15.0, output: 75.0 },
+  "anthropic/claude-3.5-sonnet": { input: 3.0, output: 15.0 },
+  "anthropic/claude-3-opus": { input: 15.0, output: 75.0 },
+  "openai/gpt-4-turbo": { input: 10.0, output: 30.0 },
+  "openai/gpt-4o": { input: 5.0, output: 15.0 },
+  "openai/gpt-4o-mini": { input: 0.15, output: 0.6 },
+  "meta-llama/llama-3.1-405b-instruct": { input: 3.0, output: 3.0 },
+  "meta-llama/llama-3.1-70b-instruct": { input: 0.5, output: 0.5 },
+  "gemini-1.5-flash": { input: 0.35, output: 1.05 },
+  "gemini-1.5-pro": { input: 3.5, output: 10.5 },
   // Default fallback
   default: { input: 1.0, output: 3.0 },
 };
@@ -535,7 +551,8 @@ export class AgentRunner extends EventEmitter implements TypedEventEmitter {
   // ─────────────────────────────────────────
 
   /**
-   * Process a single job
+   * Process a single job using the Gemini code generation pipeline:
+   * Prompt Analyzer → Gemini Code Generator → AI Critic → Project Builder → Zip → Upload → Submit
    * @param useV2Submit - If true, use v2 respond endpoint (for swarm auto-pay)
    */
   private async processJob(job: Job, useV2Submit = false): Promise<void> {
@@ -543,63 +560,27 @@ export class AgentRunner extends EventEmitter implements TypedEventEmitter {
     this.emitEvent({ type: "job_processing", job });
     this.emitLifecycleEvent("generation:start", { jobId: job.id });
     const generationStartedAt = Date.now();
+    const pipelineStart = Date.now();
 
     try {
-      // Generate response using LLM
       const llm = getLLMClient();
-      const config = getConfig();
 
-      const effectiveBudget = job.jobType === "SWARM" && job.budgetPerAgent
-        ? job.budgetPerAgent
-        : job.budget;
+      logger.info(`[Pipeline] Processing job ${job.id}: "${job.prompt.substring(0, 80)}..."`);
 
-      const result = await llm.generate({
-        prompt: job.prompt,
-        systemPrompt: `You are an AI agent participating in the Seedstr marketplace. Your task is to provide the best possible response to job requests.
+      // Step 1: Generate project with Gemini
+      logger.info("[Pipeline] Step 1 — Generating code with Gemini...");
+      const generated = await llm.generateCode(job.prompt);
+      logger.info(`[Pipeline] Generated ${generated.files.length} files`);
 
-Guidelines:
-- Be helpful, accurate, and thorough
-- Use tools when needed to get current information
-- Provide well-structured, clear responses
-- Be professional and concise
-- If you use web search, cite your sources
-
-Responding to jobs:
-- Most jobs are asking for TEXT responses — writing, answers, advice, ideas, analysis, tweets, emails, etc. For these, just respond directly with well-written text. Do NOT create files for text-based requests.
-- Only use create_file and finalize_project when the job is genuinely asking for a deliverable code project (a website, app, script, tool, etc.) that the requester would need to download and run/open.
-- Use your judgment to determine what the requester actually wants. "Write me a tweet" = text response. "Build me a landing page" = file project.
-
-Job Budget: $${effectiveBudget.toFixed(2)} USD${job.jobType === "SWARM" ? ` (your share of $${job.budget.toFixed(2)} total across ${job.maxAgents} agents)` : ""}`,
-        tools: true,
-      });
-
-      // Track token usage
-      let usage: TokenUsage | undefined;
-      if (result.usage) {
-        const cost = estimateCost(
-          config.model,
-          result.usage.promptTokens,
-          result.usage.completionTokens
-        );
-        usage = {
-          promptTokens: result.usage.promptTokens,
-          completionTokens: result.usage.completionTokens,
-          totalTokens: result.usage.totalTokens,
-          estimatedCost: cost,
-        };
-
-        // Update cumulative stats
-        this.stats.totalPromptTokens += result.usage.promptTokens;
-        this.stats.totalCompletionTokens += result.usage.completionTokens;
-        this.stats.totalTokens += result.usage.totalTokens;
-        this.stats.totalCost += cost;
-      }
+      // Step 2: Run AI critic improvement pass
+      logger.info("[Pipeline] Step 2 — Running AI critic...");
+      const improved = await llm.reviewAndImprove(generated);
+      logger.info(`[Pipeline] Critic returned ${improved.files.length} files`);
 
       this.emitEvent({
         type: "response_generated",
         job,
-        preview: result.text.substring(0, 200),
-        usage,
+        preview: `Generated ${improved.files.length} files for React + Tailwind project`,
       });
       this.emitLifecycleEvent("generation:complete", {
         jobId: job.id,
@@ -645,26 +626,30 @@ Job Budget: $${effectiveBudget.toFixed(2)} USD${job.jobType === "SWARM" ? ` (you
             fileName: uploadedFiles.name,
             fileSize: uploadedFiles.size,
           });
+      // Step 3: Build project files and create zip
+      logger.info("[Pipeline] Step 3 — Building project and creating zip...");
+      const projectName = `job-${job.id.slice(0, 8)}`;
+      const buildResult = await buildProject(projectName, improved.files);
 
-          this.emitEvent({
-            type: "files_uploaded",
-            job,
-            files: [uploadedFiles],
-          });
+      if (!buildResult.success) {
+        throw new Error(`Project build failed: ${buildResult.error}`);
+      }
 
-          // Submit response with file attachment
-          let submitResult;
-          if (useV2Submit) {
-            submitResult = await this.client.submitResponseV2(
-              job.id, result.text, "FILE", [uploadedFiles]
-            );
-          } else {
-            submitResult = await this.client.submitResponseWithFiles(job.id, {
-              content: result.text,
-              responseType: "FILE",
-              files: [uploadedFiles],
-            });
-          }
+      this.emitEvent({
+        type: "project_built",
+        job,
+        files: buildResult.files,
+        zipPath: buildResult.zipPath,
+      });
+
+      logger.info(`[Pipeline] Zip created: ${buildResult.zipPath} (${buildResult.totalSize} bytes)`);
+
+      // Step 4: Upload zip to Seedstr
+      logger.info("[Pipeline] Step 4 — Uploading zip...");
+      this.emitEvent({ type: "files_uploading", job, fileCount: 1 });
+
+      const uploadedFile = await this.client.uploadFile(buildResult.zipPath);
+      this.emitEvent({ type: "files_uploaded", job, files: [uploadedFile] });
 
           this.emitEvent({
             type: "response_submitted",
@@ -683,38 +668,26 @@ Job Budget: $${effectiveBudget.toFixed(2)} USD${job.jobType === "SWARM" ? ` (you
         } catch (uploadError) {
           // If upload fails, fall back to text-only response
           logger.error("Failed to upload project files, submitting text-only response:", uploadError);
+      // Step 5: Submit response
+      logger.info("[Pipeline] Step 5 — Submitting response...");
+      const responseContent = "Autonomous AI-generated web application responding to the prompt.";
 
-          let submitResult;
-          if (useV2Submit) {
-            submitResult = await this.client.submitResponseV2(job.id, result.text);
-          } else {
-            submitResult = await this.client.submitResponse(job.id, result.text);
-          }
+      const submitResult = await this.client.submitResponseV2(
+        job.id,
+        responseContent,
+        "FILE",
+        [uploadedFile]
+      );
 
-          this.emitEvent({
-            type: "response_submitted",
-            job,
-            responseId: submitResult.response.id,
-            hasFiles: false,
-          });
-          this.emitLifecycleEvent("submission:success", {
-            jobId: job.id,
-            responseId: submitResult.response.id,
-            hasFiles: false,
-            fallbackTextOnly: true,
-          });
+      this.emitEvent({
+        type: "response_submitted",
+        job,
+        responseId: submitResult.response.id,
+        hasFiles: true,
+      });
 
-          // Still cleanup
-          cleanupProject(projectBuild.projectDir, projectBuild.zipPath);
-        }
-      } else {
-        // Text-only response
-        let submitResult;
-        if (useV2Submit) {
-          submitResult = await this.client.submitResponseV2(job.id, result.text);
-        } else {
-          submitResult = await this.client.submitResponse(job.id, result.text);
-        }
+      logger.info(`[Pipeline] Job ${job.id} completed successfully`);
+      logger.info(`[Pipeline] Total time: ${Date.now() - pipelineStart}ms${useV2Submit ? " (swarm)" : ""}`);
 
         this.emitEvent({
           type: "response_submitted",
@@ -728,12 +701,13 @@ Job Budget: $${effectiveBudget.toFixed(2)} USD${job.jobType === "SWARM" ? ` (you
           hasFiles: false,
         });
       }
+      // Cleanup
+      cleanupProject(buildResult.projectDir, buildResult.zipPath);
 
       this.stats.jobsProcessed++;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
 
-      // Handle "already submitted" error gracefully - not really an error
       if (errorMessage.includes("already submitted")) {
         logger.debug(`Already responded to job ${job.id}, skipping`);
       } else {
@@ -741,6 +715,7 @@ Job Budget: $${effectiveBudget.toFixed(2)} USD${job.jobType === "SWARM" ? ` (you
           jobId: job.id,
           error: errorMessage,
         });
+        logger.error(`[Pipeline] Failed after ${Date.now() - pipelineStart}ms`);
         this.emitEvent({
           type: "error",
           message: `Error processing job ${job.id}: ${errorMessage}`,
