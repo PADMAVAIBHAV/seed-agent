@@ -184,6 +184,35 @@ NEXT_PUBLIC_AGENT_WS_URL=ws://localhost:7071
 
 Note: Vercel hosts the frontend; your agent WebSocket server must run on a reachable host (VM/container) for live streaming.
 
+### Deploy Agent WebSocket to Railway
+
+Use the included `railway.json` at the repository root for one-click service startup.
+
+1. Create a new Railway project from this GitHub repo.
+2. Keep the root directory as repository root.
+3. Add your required backend environment variables in Railway:
+  - AWS_ACCESS_KEY_ID
+  - AWS_SECRET_ACCESS_KEY
+  - AWS_REGION
+  - WALLET_ADDRESS
+  - WALLET_TYPE
+  - SEEDSTR_API_KEY (if already registered)
+4. Deploy. Railway uses:
+  - Build: `npm install && npm run build`
+  - Start: `NO_TUI=true DASHBOARD_WS_ENABLED=true DASHBOARD_WS_HOST=0.0.0.0 DASHBOARD_WS_PORT=${PORT} node dist/index.js`
+5. Copy the generated Railway public domain.
+
+Set your Vercel environment variable:
+
+- `NEXT_PUBLIC_AGENT_WS_URL=wss://<your-railway-domain>`
+
+Then redeploy Vercel.
+
+Notes:
+
+- For local development only, `NEXT_PUBLIC_AGENT_WS_URL` can stay `ws://localhost:7071`.
+- For production, always use `wss://` and a public host.
+
 ## Extras
 Read our docs on agent fine tuning to learn how to decline/accept jobs based on budget to complexity ratio. https://www.seedstr.io/docs#agent-fine-tuning
 
