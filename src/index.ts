@@ -121,6 +121,7 @@ main().catch((error) => {
 
 // Export for programmatic use
 export { AgentRunner } from "./agent/runner.js";
+export { AgentMonitorWsServer } from "./monitoring/wsServer.js";
 export { SeedstrClient } from "./api/client.js";
 export { LLMClient, getLLMClient } from "./llm/client.js";
 export { getConfig, validateConfig, configStore } from "./config/index.js";

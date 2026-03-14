@@ -3,8 +3,9 @@ import ora from "ora";
 import prompts from "prompts";
 import { getConfig } from "../../config/index.js";
 import { getLLMClient } from "../../llm/client.js";
+import { AgentMonitorWsServer } from "../../monitoring/wsServer.js";
 import { cleanupProject } from "../../tools/projectBuilder.js";
-import type { Job, TokenUsage } from "../../types/index.js";
+import type { Job, TokenUsage, AgentLifecycleEventName } from "../../types/index.js";
 
 const MODEL_COSTS: Record<string, { input: number; output: number }> = {
   "anthropic.claude-3-5-sonnet-20241022-v2:0": { input: 3.0, output: 15.0 },
@@ -31,6 +32,14 @@ export async function simulateCommand(options: SimulateOptions): Promise<void> {
   console.log(chalk.gray("  but nothing is submitted to the platform.\n"));
 
   const config = getConfig();
+  let monitorServer: AgentMonitorWsServer | null = null;
+  const emitLifecycle = (type: AgentLifecycleEventName, payload?: Record<string, unknown>) => {
+    monitorServer?.applyLifecycleEvent({
+      type,
+      timestamp: new Date().toISOString(),
+      payload,
+    });
+  };
 
   if (!config.awsAccessKeyId || !config.awsSecretAccessKey || !config.awsRegion) {
     console.log(chalk.red("✗ AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and AWS_REGION are required in your .env file"));
@@ -101,6 +110,26 @@ export async function simulateCommand(options: SimulateOptions): Promise<void> {
     ? fakeJob.budgetPerAgent
     : fakeJob.budget;
 
+  if (config.dashboardWsEnabled) {
+    monitorServer = new AgentMonitorWsServer(
+      config.dashboardWsHost,
+      config.dashboardWsPort,
+      () => {
+        // Simulate mode does not support runtime controls.
+      }
+    );
+    monitorServer.start();
+    monitorServer.setOnline(true);
+    monitorServer.setPaused(false);
+    emitLifecycle("agent:started");
+    emitLifecycle("agent:polling", { activeJobs: 0, simulated: true });
+    emitLifecycle("job:detected", {
+      jobId: fakeJob.id,
+      budget: fakeJob.budget,
+      jobType: fakeJob.jobType || "STANDARD",
+    });
+  }
+
     const systemPrompt = `You are an AI agent participating in the Seedstr marketplace. Your task is to provide the best possible response to job requests.
 
 Guidelines:
@@ -123,6 +152,7 @@ Job Budget: $${effectiveBudget.toFixed(2)} USD${fakeJob.jobType === "SWARM" ? ` 
   }).start();
 
   const startTime = Date.now();
+  emitLifecycle("generation:start", { jobId: fakeJob.id });
 
   try {
     const llm = getLLMClient();
@@ -133,6 +163,11 @@ Job Budget: $${effectiveBudget.toFixed(2)} USD${fakeJob.jobType === "SWARM" ? ` 
     });
 
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    emitLifecycle("generation:complete", {
+      jobId: fakeJob.id,
+      durationMs: Date.now() - startTime,
+      hasProjectBuild: !!result.projectBuild?.success,
+    });
     spinner.succeed(`Response generated in ${elapsed}s`);
 
     // Token usage
@@ -158,12 +193,29 @@ Job Budget: $${effectiveBudget.toFixed(2)} USD${fakeJob.jobType === "SWARM" ? ` 
 
     // Project build info
     if (result.projectBuild && result.projectBuild.success) {
+      emitLifecycle("build:start", {
+        jobId: fakeJob.id,
+        fileCount: result.projectBuild.files.length,
+      });
       console.log(chalk.cyan("\n📁 Project Built:"));
       console.log(chalk.gray(`  Zip: ${result.projectBuild.zipPath}`));
       console.log(chalk.gray(`  Files: ${result.projectBuild.files.join(", ")}`));
       console.log(chalk.gray(`  Size: ${(result.projectBuild.totalSize / 1024).toFixed(1)} KB`));
       console.log(chalk.yellow(`\n  Project files saved locally (not uploaded).`));
       console.log(chalk.gray(`  In production, this zip would be uploaded and submitted with the response.`));
+      emitLifecycle("build:complete", {
+        jobId: fakeJob.id,
+        zipPath: result.projectBuild.zipPath,
+        fileCount: result.projectBuild.files.length,
+      });
+      emitLifecycle("zip:start", {
+        jobId: fakeJob.id,
+        zipPath: result.projectBuild.zipPath,
+      });
+      emitLifecycle("zip:complete", {
+        jobId: fakeJob.id,
+        zipPath: result.projectBuild.zipPath,
+      });
     }
 
     // Token usage display
@@ -185,6 +237,10 @@ Job Budget: $${effectiveBudget.toFixed(2)} USD${fakeJob.jobType === "SWARM" ? ` 
     // Summary
     console.log(chalk.green("\n✓ Simulation complete!"));
     console.log(chalk.gray("  In production, this response would be submitted to the Seedstr platform."));
+    emitLifecycle("submission:success", {
+      jobId: fakeJob.id,
+      simulated: true,
+    });
 
     if (budget > 0 && usage) {
       const profitMargin = budget - usage.estimatedCost;
@@ -212,6 +268,11 @@ Job Budget: $${effectiveBudget.toFixed(2)} USD${fakeJob.jobType === "SWARM" ? ` 
     }
   } catch (error) {
     spinner.fail("Simulation failed");
+    emitLifecycle("submission:error", {
+      jobId: fakeJob.id,
+      error: error instanceof Error ? error.message : String(error),
+      simulated: true,
+    });
     console.error(
       chalk.red("\nError:"),
       error instanceof Error ? error.message : "Unknown error"
@@ -220,5 +281,10 @@ Job Budget: $${effectiveBudget.toFixed(2)} USD${fakeJob.jobType === "SWARM" ? ` 
       console.error(chalk.gray(error.stack));
     }
     process.exit(1);
+  } finally {
+    if (monitorServer) {
+      monitorServer.setOnline(false);
+      monitorServer.stop();
+    }
   }
 }

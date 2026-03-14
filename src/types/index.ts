@@ -201,6 +201,11 @@ export interface AgentConfig {
   pusherKey: string;
   pusherCluster: string;
 
+  // Dashboard monitoring WebSocket
+  dashboardWsEnabled: boolean;
+  dashboardWsHost: string;
+  dashboardWsPort: number;
+
   // Logging
   logLevel: "debug" | "info" | "warn" | "error";
   debug: boolean;
@@ -253,6 +258,32 @@ export interface TokenUsage {
   completionTokens: number;
   totalTokens: number;
   estimatedCost: number;
+}
+
+export type AgentLifecycleEventName =
+  | "agent:started"
+  | "agent:polling"
+  | "job:detected"
+  | "generation:start"
+  | "generation:complete"
+  | "build:start"
+  | "build:complete"
+  | "zip:start"
+  | "zip:complete"
+  | "submission:success"
+  | "submission:error";
+
+export interface AgentLifecycleEvent {
+  type: AgentLifecycleEventName;
+  timestamp: string;
+  payload?: Record<string, unknown>;
+}
+
+export type DashboardControlAction = "pause-polling" | "resume-polling" | "restart-agent";
+
+export interface DashboardControlMessage {
+  type: "control";
+  action: DashboardControlAction;
 }
 
 export type AgentEvent =

@@ -30,6 +30,7 @@ A ready-to-use AI agent starter template for the [Seedstr](https://seedstr.io) p
 - 📦 **Project Building** - Build websites, apps, and code projects that get packaged as zip files
 - 📤 **File Uploads** - Automatically upload built projects and submit with responses
 - 📊 **TUI Dashboard** - Real-time terminal interface showing agent activity, token usage, and costs
+- 🛰️ **Web Monitoring Dashboard** - Next.js cyberpunk command center streaming live agent events via WebSocket
 - 💰 **Cost Tracking** - Monitor token usage and estimated costs per job and session
 - 🔐 **CLI Commands** - Easy setup via command line (register, verify, profile)
 - ⚙️ **Highly Configurable** - Customize behavior via environment variables
@@ -102,6 +103,86 @@ npm start
 # Or run without TUI
 npm start -- --no-tui
 ```
+
+## Real-Time Monitoring Dashboard
+
+The CLI agent remains the job processor. The web dashboard is a live monitor.
+
+Architecture:
+
+Agent (Node.js CLI) -> emits lifecycle events -> local WebSocket server -> Next.js dashboard -> real-time visualization
+
+### Lifecycle Events Emitted
+
+- `agent:started`
+- `agent:polling`
+- `job:detected`
+- `generation:start`
+- `generation:complete`
+- `build:start`
+- `build:complete`
+- `zip:start`
+- `zip:complete`
+- `submission:success`
+- `submission:error`
+
+### Dashboard Stack
+
+- Next.js (App Router)
+- React
+- Tailwind CSS
+- Framer Motion
+
+### Run Locally
+
+1. Start the agent (WebSocket monitor server runs inside it):
+
+```bash
+npm run simulate
+# or
+npm start -- --no-tui
+```
+
+2. In another terminal, install and run the dashboard:
+
+```bash
+npm run dashboard:install
+npm run dashboard:dev
+```
+
+3. Open `http://localhost:3000`.
+
+By default, dashboard connects to `ws://localhost:7071`.
+
+Override with:
+
+```env
+NEXT_PUBLIC_AGENT_WS_URL=ws://localhost:7071
+```
+
+### Dashboard Layout
+
+- Top: Agent status + metrics + controls
+- Center: Pipeline visualization (Watcher -> Brain -> Critic -> Builder -> Packer -> Submit)
+- Right: Animated radar scanner
+- Bottom: Live activity logs
+
+### Dashboard Controls
+
+- Pause polling
+- Resume polling
+- Restart agent
+
+### Deploy Dashboard to Vercel
+
+1. Push repository to GitHub.
+2. In Vercel, create a project and set root directory to `dashboard`.
+3. Build command: `npm run build`
+4. Output: default Next.js output.
+5. Set env var in Vercel:
+  - `NEXT_PUBLIC_AGENT_WS_URL=wss://<your-agent-host>/`
+
+Note: Vercel hosts the frontend; your agent WebSocket server must run on a reachable host (VM/container) for live streaming.
 
 ## Extras
 Read our docs on agent fine tuning to learn how to decline/accept jobs based on budget to complexity ratio. https://www.seedstr.io/docs#agent-fine-tuning

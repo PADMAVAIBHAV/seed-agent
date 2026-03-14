@@ -78,6 +78,11 @@ export function getConfig(): AgentConfig {
     pusherKey: process.env.PUSHER_KEY || "",
     pusherCluster: process.env.PUSHER_CLUSTER || "us2",
 
+    // Dashboard monitoring WebSocket
+    dashboardWsEnabled: process.env.DASHBOARD_WS_ENABLED !== "false",
+    dashboardWsHost: process.env.DASHBOARD_WS_HOST || "0.0.0.0",
+    dashboardWsPort: parseInt(process.env.DASHBOARD_WS_PORT || "7071", 10),
+
     // Logging
     logLevel: (process.env.LOG_LEVEL as AgentConfig["logLevel"]) || "info",
     debug: process.env.DEBUG === "true",

@@ -6,7 +6,17 @@ import { getLLMClient } from "../llm/client.js";
 import { getConfig, configStore } from "../config/index.js";
 import { logger } from "../utils/logger.js";
 import { cleanupProject } from "../tools/projectBuilder.js";
-import type { Job, AgentEvent, TokenUsage, FileAttachment, WebSocketJobEvent } from "../types/index.js";
+import { AgentMonitorWsServer } from "../monitoring/wsServer.js";
+import type {
+  Job,
+  AgentEvent,
+  TokenUsage,
+  FileAttachment,
+  WebSocketJobEvent,
+  AgentLifecycleEvent,
+  AgentLifecycleEventName,
+  DashboardControlAction,
+} from "../types/index.js";
 
 // Approximate costs per 1M tokens for common models (input/output)
 const MODEL_COSTS: Record<string, { input: number; output: number }> = {
@@ -51,6 +61,8 @@ export class AgentRunner extends EventEmitter implements TypedEventEmitter {
   private processedJobs: Set<string>;
   private pusher: PusherClient | null = null;
   private wsConnected = false;
+  private monitorServer: AgentMonitorWsServer | null = null;
+  private pollingPaused = false;
   private stats = {
     jobsProcessed: 0,
     jobsSkipped: 0,
@@ -95,6 +107,37 @@ export class AgentRunner extends EventEmitter implements TypedEventEmitter {
   private emitEvent(event: AgentEvent): void {
     this.emit("event", event);
   }
+
+  /**
+   * Emit a dashboard-friendly lifecycle event and broadcast it to monitor clients.
+   */
+  private emitLifecycleEvent(type: AgentLifecycleEventName, payload?: Record<string, unknown>): void {
+    const event: AgentLifecycleEvent = {
+      type,
+      timestamp: new Date().toISOString(),
+      payload,
+    };
+
+    this.emit(type, event);
+    this.monitorServer?.applyLifecycleEvent(event);
+  }
+
+  private handleDashboardControl = (action: DashboardControlAction): void => {
+    switch (action) {
+      case "pause-polling":
+        this.pausePolling();
+        break;
+      case "resume-polling":
+        this.resumePolling();
+        break;
+      case "restart-agent":
+        this.restart().catch((error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          logger.error("Failed to restart agent from dashboard control:", message);
+        });
+        break;
+    }
+  };
 
   // ─────────────────────────────────────────
   // WebSocket (Pusher) connection
@@ -186,6 +229,11 @@ export class AgentRunner extends EventEmitter implements TypedEventEmitter {
   private async handleWebSocketJob(event: WebSocketJobEvent): Promise<void> {
     const config = getConfig();
 
+    if (this.pollingPaused) {
+      logger.debug(`[WS] Polling is paused, ignoring job ${event.jobId}`);
+      return;
+    }
+
     // Skip if already processing or processed
     if (this.processingJobs.has(event.jobId) || this.processedJobs.has(event.jobId)) {
       return;
@@ -212,6 +260,11 @@ export class AgentRunner extends EventEmitter implements TypedEventEmitter {
     try {
       // Fetch full job details
       const job = await this.client.getJobV2(event.jobId);
+      this.emitLifecycleEvent("job:detected", {
+        jobId: job.id,
+        budget: job.budget,
+        jobType: job.jobType || "STANDARD",
+      });
       this.emitEvent({ type: "job_found", job });
 
       // For SWARM jobs, accept first then process
@@ -258,8 +311,22 @@ export class AgentRunner extends EventEmitter implements TypedEventEmitter {
     }
 
     this.running = true;
+    this.pollingPaused = false;
     this.stats.startTime = Date.now();
     this.emitEvent({ type: "startup" });
+    this.emitLifecycleEvent("agent:started");
+
+    const config = getConfig();
+    if (config.dashboardWsEnabled && !this.monitorServer) {
+      this.monitorServer = new AgentMonitorWsServer(
+        config.dashboardWsHost,
+        config.dashboardWsPort,
+        this.handleDashboardControl
+      );
+      this.monitorServer.start();
+      this.monitorServer.setOnline(true);
+      this.monitorServer.setPaused(false);
+    }
 
     // Connect WebSocket for real-time job notifications
     this.connectWebSocket();
@@ -273,12 +340,57 @@ export class AgentRunner extends EventEmitter implements TypedEventEmitter {
    */
   async stop(): Promise<void> {
     this.running = false;
+    this.pollingPaused = false;
     if (this.pollTimer) {
       clearTimeout(this.pollTimer);
       this.pollTimer = null;
     }
     this.disconnectWebSocket();
+    if (this.monitorServer) {
+      this.monitorServer.setOnline(false);
+      this.monitorServer.stop();
+      this.monitorServer = null;
+    }
     this.emitEvent({ type: "shutdown" });
+  }
+
+  /**
+   * Pause polling so the agent does not fetch new jobs until resumed.
+   */
+  pausePolling(): void {
+    this.pollingPaused = true;
+    if (this.pollTimer) {
+      clearTimeout(this.pollTimer);
+      this.pollTimer = null;
+    }
+    this.monitorServer?.setPaused(true);
+    logger.info("Polling paused");
+  }
+
+  /**
+   * Resume polling loop after a pause.
+   */
+  resumePolling(): void {
+    if (!this.running) {
+      return;
+    }
+    if (!this.pollingPaused) {
+      return;
+    }
+
+    this.pollingPaused = false;
+    this.monitorServer?.setPaused(false);
+    logger.info("Polling resumed");
+    void this.poll();
+  }
+
+  /**
+   * Restart the runner while preserving process state.
+   */
+  async restart(): Promise<void> {
+    logger.info("Restarting agent...");
+    await this.stop();
+    await this.start();
   }
 
   // ─────────────────────────────────────────
@@ -290,11 +402,15 @@ export class AgentRunner extends EventEmitter implements TypedEventEmitter {
    */
   private async poll(): Promise<void> {
     if (!this.running) return;
+    if (this.pollingPaused) return;
 
     const config = getConfig();
 
     try {
       this.emitEvent({ type: "polling", jobCount: this.processingJobs.size });
+      this.emitLifecycleEvent("agent:polling", {
+        activeJobs: this.processingJobs.size,
+      });
 
       // Use v2 API for job listing (skill-matched)
       const response = await this.client.listJobsV2(20, 0);
@@ -329,6 +445,11 @@ export class AgentRunner extends EventEmitter implements TypedEventEmitter {
         }
 
         // Process the job
+        this.emitLifecycleEvent("job:detected", {
+          jobId: job.id,
+          budget: job.budget,
+          jobType: job.jobType || "STANDARD",
+        });
         this.emitEvent({ type: "job_found", job });
 
         if (job.jobType === "SWARM") {
@@ -363,7 +484,9 @@ export class AgentRunner extends EventEmitter implements TypedEventEmitter {
       const interval = this.wsConnected
         ? config.pollInterval * 3 * 1000  // 3x slower when WS is active (fallback only)
         : config.pollInterval * 1000;
-      this.pollTimer = setTimeout(() => this.poll(), interval);
+      if (!this.pollingPaused) {
+        this.pollTimer = setTimeout(() => this.poll(), interval);
+      }
     }
   }
 
@@ -418,6 +541,8 @@ export class AgentRunner extends EventEmitter implements TypedEventEmitter {
   private async processJob(job: Job, useV2Submit = false): Promise<void> {
     this.processingJobs.add(job.id);
     this.emitEvent({ type: "job_processing", job });
+    this.emitLifecycleEvent("generation:start", { jobId: job.id });
+    const generationStartedAt = Date.now();
 
     try {
       // Generate response using LLM
@@ -476,10 +601,19 @@ Job Budget: $${effectiveBudget.toFixed(2)} USD${job.jobType === "SWARM" ? ` (you
         preview: result.text.substring(0, 200),
         usage,
       });
+      this.emitLifecycleEvent("generation:complete", {
+        jobId: job.id,
+        durationMs: Date.now() - generationStartedAt,
+        hasProjectBuild: !!result.projectBuild?.success,
+      });
 
       // Check if a project was built
       if (result.projectBuild && result.projectBuild.success) {
         const { projectBuild } = result;
+        this.emitLifecycleEvent("build:start", {
+          jobId: job.id,
+          fileCount: projectBuild.files.length,
+        });
 
         this.emitEvent({
           type: "project_built",
@@ -487,9 +621,18 @@ Job Budget: $${effectiveBudget.toFixed(2)} USD${job.jobType === "SWARM" ? ` (you
           files: projectBuild.files,
           zipPath: projectBuild.zipPath,
         });
+        this.emitLifecycleEvent("build:complete", {
+          jobId: job.id,
+          fileCount: projectBuild.files.length,
+          zipPath: projectBuild.zipPath,
+        });
 
         try {
           // Upload the zip file
+          this.emitLifecycleEvent("zip:start", {
+            jobId: job.id,
+            zipPath: projectBuild.zipPath,
+          });
           this.emitEvent({
             type: "files_uploading",
             job,
@@ -497,6 +640,11 @@ Job Budget: $${effectiveBudget.toFixed(2)} USD${job.jobType === "SWARM" ? ` (you
           });
 
           const uploadedFiles = await this.client.uploadFile(projectBuild.zipPath);
+          this.emitLifecycleEvent("zip:complete", {
+            jobId: job.id,
+            fileName: uploadedFiles.name,
+            fileSize: uploadedFiles.size,
+          });
 
           this.emitEvent({
             type: "files_uploaded",
@@ -524,6 +672,11 @@ Job Budget: $${effectiveBudget.toFixed(2)} USD${job.jobType === "SWARM" ? ` (you
             responseId: submitResult.response.id,
             hasFiles: true,
           });
+          this.emitLifecycleEvent("submission:success", {
+            jobId: job.id,
+            responseId: submitResult.response.id,
+            hasFiles: true,
+          });
 
           // Cleanup project files
           cleanupProject(projectBuild.projectDir, projectBuild.zipPath);
@@ -544,6 +697,12 @@ Job Budget: $${effectiveBudget.toFixed(2)} USD${job.jobType === "SWARM" ? ` (you
             responseId: submitResult.response.id,
             hasFiles: false,
           });
+          this.emitLifecycleEvent("submission:success", {
+            jobId: job.id,
+            responseId: submitResult.response.id,
+            hasFiles: false,
+            fallbackTextOnly: true,
+          });
 
           // Still cleanup
           cleanupProject(projectBuild.projectDir, projectBuild.zipPath);
@@ -563,6 +722,11 @@ Job Budget: $${effectiveBudget.toFixed(2)} USD${job.jobType === "SWARM" ? ` (you
           responseId: submitResult.response.id,
           hasFiles: false,
         });
+        this.emitLifecycleEvent("submission:success", {
+          jobId: job.id,
+          responseId: submitResult.response.id,
+          hasFiles: false,
+        });
       }
 
       this.stats.jobsProcessed++;
@@ -573,6 +737,10 @@ Job Budget: $${effectiveBudget.toFixed(2)} USD${job.jobType === "SWARM" ? ` (you
       if (errorMessage.includes("already submitted")) {
         logger.debug(`Already responded to job ${job.id}, skipping`);
       } else {
+        this.emitLifecycleEvent("submission:error", {
+          jobId: job.id,
+          error: errorMessage,
+        });
         this.emitEvent({
           type: "error",
           message: `Error processing job ${job.id}: ${errorMessage}`,
@@ -609,6 +777,13 @@ Job Budget: $${effectiveBudget.toFixed(2)} USD${job.jobType === "SWARM" ? ` (you
    */
   isRunning(): boolean {
     return this.running;
+  }
+
+  /**
+   * Check whether polling is currently paused.
+   */
+  isPollingPaused(): boolean {
+    return this.pollingPaused;
   }
 }
 
