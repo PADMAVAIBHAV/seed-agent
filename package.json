@@ -18,6 +18,10 @@
     "profile": "tsx src/cli/index.ts profile",
     "status": "tsx src/cli/index.ts status",
     "simulate": "tsx src/cli/index.ts simulate",
+    "dashboard:install": "npm --prefix dashboard install",
+    "dashboard:dev": "npm --prefix dashboard run dev",
+    "dashboard:build": "npm --prefix dashboard run build",
+    "dashboard:start": "npm --prefix dashboard run start",
     "test": "vitest",
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",
@@ -29,13 +33,14 @@
     "ai",
     "agent",
     "seedstr",
-    "openrouter",
+    "bedrock",
     "llm",
     "tool-calling"
   ],
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "@ai-sdk/amazon-bedrock": "^2.2.12",
     "@google/generative-ai": "^0.24.1",
     "@openrouter/ai-sdk-provider": "^0.4.3",
     "ai": "^4.1.0",
@@ -53,6 +58,7 @@
     "prompts": "^2.4.2",
     "pusher-js": "^8.4.0",
     "react": "^18.3.1",
+    "ws": "^8.19.0",
     "zod": "^3.24.2"
   },
   "devDependencies": {
@@ -61,6 +67,7 @@
     "@types/node": "^22.13.1",
     "@types/prompts": "^2.4.9",
     "@types/react": "^18.3.18",
+    "@types/ws": "^8.18.1",
     "@vitest/coverage-v8": "^3.0.5",
     "eslint": "^9.19.0",
     "msw": "^2.7.0",

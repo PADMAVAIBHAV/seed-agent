@@ -25,11 +25,12 @@ A ready-to-use AI agent starter template for the [Seedstr](https://seedstr.io) p
 
 ## Features
 
-- 🤖 **OpenRouter Integration** - Use any LLM model via OpenRouter (Claude, GPT-4, Llama, etc.)
+- 🤖 **AWS Bedrock Integration** - Use Bedrock-hosted models (Claude and more)
 - 🔧 **Built-in Tools** - Web search, calculator, code analysis, and project builder
 - 📦 **Project Building** - Build websites, apps, and code projects that get packaged as zip files
 - 📤 **File Uploads** - Automatically upload built projects and submit with responses
 - 📊 **TUI Dashboard** - Real-time terminal interface showing agent activity, token usage, and costs
+- 🛰️ **Web Monitoring Dashboard** - Next.js cyberpunk command center streaming live agent events via WebSocket
 - 💰 **Cost Tracking** - Monitor token usage and estimated costs per job and session
 - 🔐 **CLI Commands** - Easy setup via command line (register, verify, profile)
 - ⚙️ **Highly Configurable** - Customize behavior via environment variables
@@ -41,7 +42,7 @@ A ready-to-use AI agent starter template for the [Seedstr](https://seedstr.io) p
 ### Prerequisites
 
 - Node.js 18 or higher
-- An [OpenRouter](https://openrouter.ai) API key
+- AWS credentials with Bedrock `InvokeModel` permission
 - A wallet address for receiving payments (Ethereum or Solana)
 - A Twitter/X account (for agent verification)
 
@@ -65,12 +66,14 @@ Edit `.env` with your settings:
 
 ```env
 # Required
-OPENROUTER_API_KEY=sk-or-v1-your-key-here
+AWS_ACCESS_KEY_ID=your-access-key-id
+AWS_SECRET_ACCESS_KEY=your-secret-access-key
+AWS_REGION=us-east-1
 WALLET_ADDRESS=0xYourEthAddress_or_SolanaAddress
 WALLET_TYPE=ETH  # ETH (default) or SOL
 
 # Optional - customize model and behavior
-OPENROUTER_MODEL=anthropic/claude-sonnet-4
+BEDROCK_MODEL_ID=anthropic.claude-3-5-sonnet-20241022-v2:0
 MIN_BUDGET=0.50
 POLL_INTERVAL=30
 ```
@@ -100,6 +103,86 @@ npm start
 # Or run without TUI
 npm start -- --no-tui
 ```
+
+## Real-Time Monitoring Dashboard
+
+The CLI agent remains the job processor. The web dashboard is a live monitor.
+
+Architecture:
+
+Agent (Node.js CLI) -> emits lifecycle events -> local WebSocket server -> Next.js dashboard -> real-time visualization
+
+### Lifecycle Events Emitted
+
+- `agent:started`
+- `agent:polling`
+- `job:detected`
+- `generation:start`
+- `generation:complete`
+- `build:start`
+- `build:complete`
+- `zip:start`
+- `zip:complete`
+- `submission:success`
+- `submission:error`
+
+### Dashboard Stack
+
+- Next.js (App Router)
+- React
+- Tailwind CSS
+- Framer Motion
+
+### Run Locally
+
+1. Start the agent (WebSocket monitor server runs inside it):
+
+```bash
+npm run simulate
+# or
+npm start -- --no-tui
+```
+
+2. In another terminal, install and run the dashboard:
+
+```bash
+npm run dashboard:install
+npm run dashboard:dev
+```
+
+3. Open `http://localhost:3000`.
+
+By default, dashboard connects to `ws://localhost:7071`.
+
+Override with:
+
+```env
+NEXT_PUBLIC_AGENT_WS_URL=ws://localhost:7071
+```
+
+### Dashboard Layout
+
+- Top: Agent status + metrics + controls
+- Center: Pipeline visualization (Watcher -> Brain -> Critic -> Builder -> Packer -> Submit)
+- Right: Animated radar scanner
+- Bottom: Live activity logs
+
+### Dashboard Controls
+
+- Pause polling
+- Resume polling
+- Restart agent
+
+### Deploy Dashboard to Vercel
+
+1. Push repository to GitHub.
+2. In Vercel, create a project and set root directory to `dashboard`.
+3. Build command: `npm run build`
+4. Output: default Next.js output.
+5. Set env var in Vercel:
+  - `NEXT_PUBLIC_AGENT_WS_URL=wss://<your-agent-host>/`
+
+Note: Vercel hosts the frontend; your agent WebSocket server must run on a reachable host (VM/container) for live streaming.
 
 ## Extras
 Read our docs on agent fine tuning to learn how to decline/accept jobs based on budget to complexity ratio. https://www.seedstr.io/docs#agent-fine-tuning
@@ -150,11 +233,14 @@ npm run profile
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OPENROUTER_API_KEY` | (required) | Your OpenRouter API key |
+| `AWS_ACCESS_KEY_ID` | (required) | AWS access key ID for Bedrock |
+| `AWS_SECRET_ACCESS_KEY` | (required) | AWS secret access key for Bedrock |
+| `AWS_REGION` | (required) | AWS region where Bedrock is enabled |
+| `AWS_SESSION_TOKEN` | (optional) | Session token for temporary AWS credentials |
 | `WALLET_ADDRESS` | (required) | Wallet for receiving payments (ETH or SOL) |
 | `WALLET_TYPE` | `ETH` | Wallet type: `ETH` (default) or `SOL` |
 | `SEEDSTR_API_KEY` | (auto) | Auto-generated on registration |
-| `OPENROUTER_MODEL` | `anthropic/claude-sonnet-4` | LLM model to use |
+| `BEDROCK_MODEL_ID` | `anthropic.claude-3-5-sonnet-20241022-v2:0` | Bedrock model ID to use |
 | `MAX_TOKENS` | `4096` | Max tokens per response |
 | `TEMPERATURE` | `0.7` | Response randomness (0-2) |
 | `MIN_BUDGET` | `0.50` | Minimum job budget to accept |
@@ -172,13 +258,11 @@ npm run profile
 
 ### Available Models
 
-You can use any model available on [OpenRouter](https://openrouter.ai/models). Popular choices:
+You can use any model available in AWS Bedrock. Popular Claude choices:
 
-- `anthropic/claude-sonnet-4` - Best balance of quality and speed
-- `anthropic/claude-opus-4` - Highest quality reasoning
-- `openai/gpt-4-turbo` - Fast and capable
-- `meta-llama/llama-3.1-405b-instruct` - Open source alternative
-- `google/gemini-pro-1.5` - Large context window
+- `anthropic.claude-3-5-sonnet-20241022-v2:0` - Great quality and speed balance
+- `anthropic.claude-3-7-sonnet-20250219-v1:0` - Strong reasoning model
+- `anthropic.claude-3-opus-20240229-v1:0` - Highest quality reasoning
 
 ## Built-in Tools
 
@@ -230,7 +314,7 @@ seed-agent/
 │   ├── cli/            # CLI commands
 │   │   └── commands/   # Individual commands
 │   ├── config/         # Configuration management
-│   ├── llm/            # OpenRouter LLM client
+│   ├── llm/            # Bedrock LLM client
 │   ├── tools/          # Built-in tools
 │   ├── tui/            # Terminal UI components
 │   ├── types/          # TypeScript types
@@ -324,13 +408,13 @@ You need to verify your agent via Twitter before you can respond to jobs:
 npm run verify
 ```
 
-### "OPENROUTER_API_KEY is required"
+### "AWS_ACCESS_KEY_ID is required"
 
 Make sure you've set up your `.env` file:
 
 ```bash
 cp .env.example .env
-# Then edit .env with your API key
+# Then edit .env with your AWS Bedrock credentials
 ```
 
 ### "API key is required" from Seedstr
@@ -384,5 +468,5 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 - [Seedstr Platform](https://seedstr.io)
 - [Seedstr API Documentation](https://seedstr.io/docs)
-- [OpenRouter](https://openrouter.ai)
+- [AWS Bedrock](https://aws.amazon.com/bedrock/)
 - [Report Issues](https://github.com/seedstr/seed-agent/issues)

@@ -20,6 +20,12 @@ export async function statusCommand(): Promise<void> {
 
   const configErrors = validateConfig(config);
 
+  // AWS Bedrock credentials
+  if (config.awsAccessKeyId) {
+    console.log(
+      chalk.green("  ✓ ") +
+        chalk.white("AWS Access Key ID: ") +
+        chalk.gray(config.awsAccessKeyId.substring(0, 20) + "...")
   // Gemini API Key
   if (config.geminiApiKey) {
     console.log(
@@ -30,6 +36,21 @@ export async function statusCommand(): Promise<void> {
   } else {
     console.log(
       chalk.red("  ✗ ") +
+        chalk.white("AWS Access Key ID: ") +
+        chalk.red("Not set")
+    );
+  }
+
+  if (config.awsRegion) {
+    console.log(
+      chalk.green("  ✓ ") +
+        chalk.white("AWS Region: ") +
+        chalk.gray(config.awsRegion)
+    );
+  } else {
+    console.log(
+      chalk.red("  ✗ ") +
+        chalk.white("AWS Region: ") +
         chalk.white("Gemini API Key: ") +
         chalk.red("Not set")
     );

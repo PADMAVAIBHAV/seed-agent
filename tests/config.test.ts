@@ -20,6 +20,7 @@ describe("Config", () => {
 
       const config = getConfig();
 
+      expect(config.model).toBe("anthropic.claude-3-5-sonnet-20241022-v2:0");
       expect(config.model).toBe("gemini-1.5-flash");
       expect(config.maxTokens).toBe(4096);
       expect(config.temperature).toBe(0.7);
@@ -30,6 +31,7 @@ describe("Config", () => {
     });
 
     it("should use environment variables", () => {
+      process.env.BEDROCK_MODEL_ID = "anthropic.claude-3-5-sonnet-20241022-v2:0";
       process.env.GEMINI_MODEL = "gemini-1.5-pro";
       process.env.MAX_TOKENS = "8000";
       process.env.TEMPERATURE = "0.5";
@@ -38,6 +40,7 @@ describe("Config", () => {
 
       const config = getConfig();
 
+      expect(config.model).toBe("anthropic.claude-3-5-sonnet-20241022-v2:0");
       expect(config.model).toBe("gemini-1.5-pro");
       expect(config.maxTokens).toBe(8000);
       expect(config.temperature).toBe(0.5);
@@ -72,12 +75,40 @@ describe("Config", () => {
       expect(errors).toHaveLength(0);
     });
 
+    it("should require AWS_ACCESS_KEY_ID", () => {
+      process.env.AWS_ACCESS_KEY_ID = "";
     it("should require GEMINI_API_KEY", () => {
       process.env.GEMINI_API_KEY = "";
 
       const config = getConfig();
       const errors = validateConfig(config);
 
+      expect(errors).toContain("AWS_ACCESS_KEY_ID is required");
+    });
+
+    it("should require AWS_SECRET_ACCESS_KEY", () => {
+      process.env.AWS_SECRET_ACCESS_KEY = "";
+
+      const config = getConfig();
+      const errors = validateConfig(config);
+
+      expect(errors).toContain("AWS_SECRET_ACCESS_KEY is required");
+    });
+
+    it("should require AWS_REGION", () => {
+      process.env.AWS_REGION = "";
+
+      const config = getConfig();
+      const errors = validateConfig(config);
+
+      expect(errors).toContain("AWS_REGION is required");
+    });
+
+    it("should require WALLET_ADDRESS", () => {
+      // Delete env var to test validation behavior
+      delete process.env.WALLET_ADDRESS;
+
+      const config = getConfig();
       expect(errors).toContain("GEMINI_API_KEY is required");
     });
 

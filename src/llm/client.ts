@@ -1,3 +1,6 @@
+import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
+import { generateText, tool, CoreTool } from "ai";
+import { z } from "zod";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { getConfig } from "../config/index.js";
 import { logger } from "../utils/logger.js";
@@ -220,6 +223,13 @@ interface GeminiCallOptions {
 }
 
 /**
+ * Amazon Bedrock LLM Client with built-in tool support
+ */
+export class LLMClient {
+  private bedrock: ReturnType<typeof createAmazonBedrock>;
+  private model: string;
+  private maxTokens: number;
+  private temperature: number;
  * Gemini-based LLM Client
  */
 export class LLMClient {
@@ -229,6 +239,28 @@ export class LLMClient {
   constructor() {
     const config = getConfig();
 
+    if (!config.awsAccessKeyId) {
+      throw new Error("AWS_ACCESS_KEY_ID is required");
+    }
+
+    if (!config.awsSecretAccessKey) {
+      throw new Error("AWS_SECRET_ACCESS_KEY is required");
+    }
+
+    if (!config.awsRegion) {
+      throw new Error("AWS_REGION is required");
+    }
+
+    this.bedrock = createAmazonBedrock({
+      accessKeyId: config.awsAccessKeyId,
+      secretAccessKey: config.awsSecretAccessKey,
+      sessionToken: config.awsSessionToken || undefined,
+      region: config.awsRegion,
+    });
+
+    this.model = config.model;
+    this.maxTokens = config.maxTokens;
+    this.temperature = config.temperature;
     if (!config.geminiApiKey) {
       throw new Error("GEMINI_API_KEY is required");
     }
@@ -344,6 +376,21 @@ export class LLMClient {
     const fullPrompt = `${CRITIC_SYSTEM_PROMPT}\n\nProject JSON:\n\n${codeJSON}`;
 
     try {
+      const result = await generateText({
+        model: this.bedrock(this.model),
+        prompt,
+        system: systemPrompt,
+        maxTokens,
+        temperature,
+        tools: hasTools ? tools : undefined,
+        maxSteps: hasTools ? 10 : 1, // Allow up to 10 tool call steps
+        onStepFinish: (step) => {
+          // Debug logging for each step
+          logger.debug(`Step finished - finishReason: ${step.finishReason}, hasText: ${!!step.text}, toolCalls: ${step.toolCalls?.length || 0}`);
+          if (step.text) {
+            logger.debug(`Step text preview: ${step.text.substring(0, 100)}...`);
+          }
+        },
       const text = await this.callGemini(fullPrompt, {
         timeoutMs: 8_000,
         maxAttemptsPerModel: 1,
@@ -375,6 +422,146 @@ export class LLMClient {
   /**
    * Legacy generate function (for other parts of the agent)
    */
+  async generateJobResponse(job: { prompt: string; budget: number }): Promise<string> {
+    const systemPrompt = `
+You are an autonomous AI software engineer participating in the Seedstr Blind Hackathon.
+
+Your objective is to generate the highest-quality functional solution to the job prompt.
+
+The judging system is an automated AI evaluator that scores submissions based on:
+
+1. Functionality
+2. Design quality
+3. Completeness
+4. Usability
+5. Speed of delivery
+
+Your response must therefore aim to maximize these criteria.
+
+You are not simply answering a prompt — you are designing and delivering a fully working solution.
+
+----------------------------
+
+THINKING PROCESS
+
+Before generating output:
+
+1. Analyze the job prompt carefully.
+2. Infer any missing requirements.
+3. Expand the idea into a complete product.
+4. Design the best possible implementation.
+
+If the prompt is vague, assume the requester wants a polished production-quality result.
+
+----------------------------
+
+WEB PROJECT REQUIREMENTS
+
+When generating web applications:
+
+Always produce a modern production-ready stack using:
+
+React + Tailwind CSS
+
+Include:
+
+• Responsive layout
+• Modern SaaS UI patterns
+• Hero section
+• Feature sections
+• Call-to-action areas
+• Navigation header
+• Footer
+• Animations and transitions
+• Dark mode support
+• Clean component structure
+• Modular reusable components
+
+Use professional design patterns including:
+
+• gradients
+• glassmorphism
+• soft shadows
+• modern typography
+• spacing systems
+• smooth micro-interactions
+
+Ensure the UI looks like a real startup landing page or SaaS product.
+
+----------------------------
+
+OUTPUT STRUCTURE
+
+If generating code, return a full project structure using JSON:
+
+{
+ "files":[
+   {"path":"src/App.tsx","content":"..."},
+   {"path":"src/components/Hero.tsx","content":"..."}
+ ]
+}
+
+Ensure:
+
+• valid syntax
+• no missing dependencies
+• realistic folder structure
+• clean readable code
+
+----------------------------
+
+QUALITY STANDARDS
+
+Your output should resemble work from a senior frontend engineer.
+
+Avoid:
+
+• placeholder text
+• incomplete sections
+• minimal demos
+
+Instead produce:
+
+• fully structured sections
+• realistic copy
+• visually impressive layouts
+
+----------------------------
+
+OPTIMIZATION
+
+The judging system favors:
+
+• visually appealing designs
+• well structured code
+• thoughtful features
+• polished UI
+
+Prioritize quality and completeness.
+
+----------------------------
+
+JOB CONTEXT
+
+Job Budget: $${job.budget.toFixed(2)} USD
+
+A higher budget indicates a more valuable request and should receive a more detailed solution.
+
+----------------------------
+
+GOAL
+
+Deliver the best possible solution that would impress both developers and end users.
+
+Your output should feel like a real production-ready product.
+`;
+    const result = await this.generate({
+      prompt: job.prompt,
+      systemPrompt,
+      tools: true,
+    });
+
+    return result.text;
   async generate(options: GenerateOptions): Promise<LLMResponse> {
     const { prompt, systemPrompt, maxTokens, temperature } = options;
 

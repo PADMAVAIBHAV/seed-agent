@@ -1,0 +1,35 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 20% 20%, rgba(255, 46, 196, 0.16), transparent 32%),
+    radial-gradient(circle at 80% 5%, rgba(46, 230, 255, 0.2), transparent 36%),
+    linear-gradient(160deg, #05070d 0%, #0b1323 45%, #09111e 100%);
+  color: #e6f5ff;
+}
+
+.cyber-grid {
+  background-image: linear-gradient(rgba(46, 230, 255, 0.1) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(46, 230, 255, 0.1) 1px, transparent 1px);
+  background-size: 34px 34px;
+  mask-image: radial-gradient(circle at center, black 45%, transparent 100%);
+}
+
+.glass-panel {
+  background: rgba(7, 12, 24, 0.66);
+  backdrop-filter: blur(9px);
+  border: 1px solid rgba(46, 230, 255, 0.24);
+  box-shadow: 0 0 24px rgba(46, 230, 255, 0.15);
+}
+
+.pink-panel {
+  border: 1px solid rgba(255, 46, 196, 0.35);
+  box-shadow: 0 0 22px rgba(255, 46, 196, 0.2);
+}
