@@ -5,7 +5,7 @@ import { SeedstrClient } from "../api/client.js";
 import { getLLMClient } from "../llm/client.js";
 import { getConfig, configStore } from "../config/index.js";
 import { logger } from "../utils/logger.js";
-import { buildProject, cleanupProject } from "../tools/projectBuilder.js";
+import { cleanupProject } from "../tools/projectBuilder.js";
 import { AgentMonitorWsServer } from "../monitoring/wsServer.js";
 import type {
   Job,
@@ -14,6 +14,7 @@ import type {
   AgentLifecycleEvent,
   AgentLifecycleEventName,
   DashboardControlAction,
+  FileAttachment,
 } from "../types/index.js";
 
 interface TypedEventEmitter {
@@ -393,78 +394,96 @@ export class AgentRunner extends EventEmitter implements TypedEventEmitter {
     const generationStartedAt = Date.now();
 
     try {
+      const config = getConfig();
+      const effectiveBudget = job.jobType === "SWARM" && job.budgetPerAgent
+        ? job.budgetPerAgent
+        : job.budget;
+
+      const systemPrompt = `You are an AI agent on the Seedstr marketplace. Provide the best possible response to job requests.
+
+Guidelines:
+- Be helpful, accurate, and thorough
+- Provide well-structured, clear responses
+- Most jobs ask for TEXT responses (writing, answers, advice, analysis, etc.). Respond directly with text for these.
+- Only use create_file and finalize_project when the job genuinely asks for a deliverable code project (a website, app, script, or tool) that the requester would download and run.
+
+Job Budget: $${effectiveBudget.toFixed(2)} USD`;
+
       const llm = getLLMClient();
-      const generated = await llm.generateCode(job.prompt);
-      const improved = await llm.reviewAndImprove(generated);
+      const result = await llm.generate({
+        prompt: job.prompt,
+        systemPrompt,
+        tools: true,
+      });
 
       this.emitEvent({
         type: "response_generated",
         job,
-        preview: `Generated ${improved.files.length} files for React + Tailwind project`,
+        preview: result.projectBuild?.success
+          ? `Generated ${result.projectBuild.files.length} project files`
+          : result.text.slice(0, 120),
       });
       this.emitLifecycleEvent("generation:complete", {
         jobId: job.id,
         durationMs: Date.now() - generationStartedAt,
-        hasProjectBuild: improved.files.length > 0,
+        hasProjectBuild: !!result.projectBuild?.success,
       });
 
-      this.emitLifecycleEvent("build:start", {
-        jobId: job.id,
-        fileCount: improved.files.length,
-      });
+      let uploadedFile: FileAttachment | undefined;
 
-      const projectName = `job-${job.id.slice(0, 8)}`;
-      const buildResult = await buildProject(projectName, improved.files);
+      if (result.projectBuild?.success) {
+        this.emitLifecycleEvent("build:complete", {
+          jobId: job.id,
+          fileCount: result.projectBuild.files.length,
+          zipPath: result.projectBuild.zipPath,
+        });
+        this.emitEvent({
+          type: "project_built",
+          job,
+          files: result.projectBuild.files,
+          zipPath: result.projectBuild.zipPath,
+        });
+        this.emitLifecycleEvent("zip:start", {
+          jobId: job.id,
+          zipPath: result.projectBuild.zipPath,
+        });
+        this.emitEvent({ type: "files_uploading", job, fileCount: 1 });
 
-      if (!buildResult.success) {
-        throw new Error(`Project build failed: ${buildResult.error || "unknown error"}`);
+        uploadedFile = await this.client.uploadFile(result.projectBuild.zipPath);
+
+        this.emitEvent({ type: "files_uploaded", job, files: [uploadedFile] });
+        this.emitLifecycleEvent("zip:complete", {
+          jobId: job.id,
+          fileName: uploadedFile.name,
+          fileSize: uploadedFile.size,
+        });
       }
 
-      this.emitEvent({
-        type: "project_built",
-        job,
-        files: buildResult.files,
-        zipPath: buildResult.zipPath,
-      });
-      this.emitLifecycleEvent("build:complete", {
-        jobId: job.id,
-        fileCount: buildResult.files.length,
-        zipPath: buildResult.zipPath,
-      });
-
-      this.emitLifecycleEvent("zip:start", {
-        jobId: job.id,
-        zipPath: buildResult.zipPath,
-      });
-      this.emitEvent({ type: "files_uploading", job, fileCount: 1 });
-
-      const uploadedFile = await this.client.uploadFile(buildResult.zipPath);
-
-      this.emitEvent({ type: "files_uploaded", job, files: [uploadedFile] });
-      this.emitLifecycleEvent("zip:complete", {
-        jobId: job.id,
-        fileName: uploadedFile.name,
-        fileSize: uploadedFile.size,
-      });
-
-      const responseContent = "Autonomous AI-generated web application responding to the prompt.";
+      const responseContent = result.text || "Project files are attached.";
       const submitResult = useV2Submit
-        ? await this.client.submitResponseV2(job.id, responseContent, "FILE", [uploadedFile])
+        ? await this.client.submitResponseV2(
+            job.id,
+            responseContent,
+            uploadedFile ? "FILE" : "TEXT",
+            uploadedFile ? [uploadedFile] : undefined
+          )
         : await this.client.submitResponse(job.id, responseContent);
 
       this.emitEvent({
         type: "response_submitted",
         job,
         responseId: submitResult.response.id,
-        hasFiles: true,
+        hasFiles: !!uploadedFile,
       });
       this.emitLifecycleEvent("submission:success", {
         jobId: job.id,
         responseId: submitResult.response.id,
-        hasFiles: true,
+        hasFiles: !!uploadedFile,
       });
 
-      cleanupProject(buildResult.projectDir, buildResult.zipPath);
+      if (result.projectBuild?.success) {
+        cleanupProject(result.projectBuild.projectDir, result.projectBuild.zipPath);
+      }
       this.stats.jobsProcessed++;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
