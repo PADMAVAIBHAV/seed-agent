@@ -123,7 +123,6 @@ export async function simulateCommand(options: SimulateOptions): Promise<void> {
 
   if (config.dashboardWsEnabled) {
     monitorServer = new AgentMonitorWsServer(
-      config.dashboardWsHost,
       config.dashboardWsPort,
       () => {
         // Simulate mode does not support runtime controls.

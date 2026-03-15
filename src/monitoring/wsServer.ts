@@ -44,7 +44,6 @@ function isControlMessage(data: unknown): data is DashboardControlMessage {
 
 export class AgentMonitorWsServer {
   private wss: WebSocketServer | null = null;
-  private readonly host: string;
   private readonly port: number;
   private readonly onControl: (action: DashboardControlAction) => void;
 
@@ -61,8 +60,7 @@ export class AgentMonitorWsServer {
     },
   };
 
-  constructor(host: string, port: number, onControl: (action: DashboardControlAction) => void) {
-    this.host = host;
+  constructor(port: number, onControl: (action: DashboardControlAction) => void) {
     this.port = port;
     this.onControl = onControl;
   }
@@ -72,23 +70,22 @@ export class AgentMonitorWsServer {
       return;
     }
 
+    const port = Number(process.env.PORT || process.env.DASHBOARD_WS_PORT || this.port || 7071);
+
     this.wss = new WebSocketServer({
-      host: this.host,
-      port: this.port,
+      port,
     });
 
     this.wss.on("connection", (socket) => this.handleConnection(socket));
 
     this.wss.on("listening", () => {
-      logger.info(`Monitoring WebSocket listening on ws://${this.host}:${this.port}`);
+      logger.info(`Monitoring WebSocket listening on port ${port}`);
     });
 
     this.wss.on("error", (error) => {
       const err = error as NodeJS.ErrnoException;
       if (err.code === "EADDRINUSE") {
-        logger.warn(
-          `Monitoring WebSocket disabled: ${this.host}:${this.port} is already in use`
-        );
+        logger.warn(`Monitoring WebSocket disabled: port ${port} is already in use`);
         this.wss?.close();
         this.wss = null;
         return;

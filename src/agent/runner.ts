@@ -226,7 +226,6 @@ export class AgentRunner extends EventEmitter implements TypedEventEmitter {
     const config = getConfig();
     if (config.dashboardWsEnabled && !this.monitorServer) {
       this.monitorServer = new AgentMonitorWsServer(
-        config.dashboardWsHost,
         config.dashboardWsPort,
         this.handleDashboardControl
       );
