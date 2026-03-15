@@ -30,10 +30,24 @@ export interface MonitorSnapshot {
   };
 }
 
+export interface JobHistoryItem {
+  jobId: string;
+  completedAt: string;
+  downloadUrl: string;
+}
+
+export interface PreviewFile {
+  name: string;
+  content: string;
+}
+
 export interface MonitorState {
   connected: boolean;
   snapshot: MonitorSnapshot;
   logs: LifecycleEvent[];
+  jobs: JobHistoryItem[];
+  files: PreviewFile[];
+  activeFile: string | null;
 }
 
 export type ControlAction = "pause-polling" | "resume-polling" | "restart-agent";

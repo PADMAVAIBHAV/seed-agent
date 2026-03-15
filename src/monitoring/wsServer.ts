@@ -25,6 +25,11 @@ interface MonitorOutboundMessage {
   snapshot?: MonitorSnapshot;
 }
 
+interface StageUpdateMessage {
+  type: "stage_update";
+  stage: "watcher" | "brain" | "critic" | "builder" | "packer" | "submit";
+}
+
 function isControlMessage(data: unknown): data is DashboardControlMessage {
   if (!data || typeof data !== "object") {
     return false;
@@ -121,6 +126,12 @@ export class AgentMonitorWsServer {
     this.broadcastSnapshot();
   }
 
+  broadcastStageUpdate(stage: StageUpdateMessage["stage"]): void {
+    this.snapshot.currentStage = stage;
+    this.broadcast({ type: "stage_update", stage });
+    this.broadcastSnapshot();
+  }
+
   applyLifecycleEvent(event: AgentLifecycleEvent): void {
     switch (event.type) {
       case "agent:started":
@@ -201,7 +212,7 @@ export class AgentMonitorWsServer {
     this.broadcast({ kind: "snapshot", snapshot: this.snapshot });
   }
 
-  private broadcast(message: MonitorOutboundMessage): void {
+  private broadcast(message: MonitorOutboundMessage | StageUpdateMessage): void {
     if (!this.wss) {
       return;
     }
@@ -213,7 +224,7 @@ export class AgentMonitorWsServer {
     }
   }
 
-  private send(socket: WebSocket, message: MonitorOutboundMessage): void {
+  private send(socket: WebSocket, message: MonitorOutboundMessage | StageUpdateMessage): void {
     try {
       socket.send(JSON.stringify(message));
     } catch (error) {

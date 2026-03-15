@@ -86,6 +86,10 @@ export class AgentRunner extends EventEmitter implements TypedEventEmitter {
     this.monitorServer?.applyLifecycleEvent(event);
   }
 
+  private emitStageUpdate(stage: "watcher" | "brain" | "critic" | "builder" | "packer" | "submit"): void {
+    this.monitorServer?.broadcastStageUpdate(stage);
+  }
+
   private handleDashboardControl = (action: DashboardControlAction): void => {
     switch (action) {
       case "pause-polling":
@@ -232,6 +236,7 @@ export class AgentRunner extends EventEmitter implements TypedEventEmitter {
       this.monitorServer.start();
       this.monitorServer.setOnline(true);
       this.monitorServer.setPaused(false);
+      this.emitStageUpdate("watcher");
     }
 
     this.connectWebSocket();
@@ -290,6 +295,7 @@ export class AgentRunner extends EventEmitter implements TypedEventEmitter {
     const config = getConfig();
 
     try {
+      this.emitStageUpdate("watcher");
       this.emitEvent({ type: "polling", jobCount: this.processingJobs.size });
       this.emitLifecycleEvent("agent:polling", {
         activeJobs: this.processingJobs.size,
@@ -389,6 +395,7 @@ export class AgentRunner extends EventEmitter implements TypedEventEmitter {
   private async processJob(job: Job, useV2Submit = false): Promise<void> {
     this.processingJobs.add(job.id);
     this.emitEvent({ type: "job_processing", job });
+    this.emitStageUpdate("brain");
     this.emitLifecycleEvent("generation:start", { jobId: job.id });
     const generationStartedAt = Date.now();
 
@@ -415,6 +422,7 @@ Job Budget: $${effectiveBudget.toFixed(2)} USD`;
         tools: true,
       });
 
+      this.emitStageUpdate("critic");
       this.emitEvent({
         type: "response_generated",
         job,
@@ -431,6 +439,7 @@ Job Budget: $${effectiveBudget.toFixed(2)} USD`;
       let uploadedFile: FileAttachment | undefined;
 
       if (result.projectBuild?.success) {
+        this.emitStageUpdate("builder");
         this.emitLifecycleEvent("build:complete", {
           jobId: job.id,
           fileCount: result.projectBuild.files.length,
@@ -446,6 +455,7 @@ Job Budget: $${effectiveBudget.toFixed(2)} USD`;
           jobId: job.id,
           zipPath: result.projectBuild.zipPath,
         });
+        this.emitStageUpdate("packer");
         this.emitEvent({ type: "files_uploading", job, fileCount: 1 });
 
         uploadedFile = await this.client.uploadFile(result.projectBuild.zipPath);
@@ -459,6 +469,7 @@ Job Budget: $${effectiveBudget.toFixed(2)} USD`;
       }
 
       const responseContent = result.text || "Project files are attached.";
+      this.emitStageUpdate("submit");
       const submitResult = useV2Submit
         ? await this.client.submitResponseV2(
             job.id,
