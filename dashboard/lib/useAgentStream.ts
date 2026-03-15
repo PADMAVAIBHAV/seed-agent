@@ -2,12 +2,14 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
+  AgentMonitorState,
   ControlAction,
   JobHistoryItem,
   LifecycleEvent,
   MonitorState,
   MonitorSnapshot,
   PreviewFile,
+  TimelineEntry,
 } from "./types";
 
 const DEFAULT_SNAPSHOT: MonitorSnapshot = {
@@ -23,6 +25,15 @@ const DEFAULT_SNAPSHOT: MonitorSnapshot = {
   },
 };
 
+function makeDefaultAgentState(stage = "watcher"): AgentMonitorState {
+  return {
+    currentStage: stage,
+    logs: [],
+    timeline: [],
+    online: true,
+  };
+}
+
 export function useAgentStream() {
   const [state, setState] = useState<MonitorState>({
     connected: false,
@@ -31,6 +42,9 @@ export function useAgentStream() {
     jobs: [],
     files: [],
     activeFile: null,
+    stageLogs: {},
+    timeline: [],
+    agents: {},
   });
 
   const socketRef = useRef<WebSocket | null>(null);
@@ -63,7 +77,21 @@ export function useAgentStream() {
       };
 
       socket.onclose = () => {
-        setState((prev) => ({ ...prev, connected: false }));
+        setState((prev) => {
+          const nextAgents: Record<string, AgentMonitorState> = {};
+          for (const [agentId, agent] of Object.entries(prev.agents)) {
+            nextAgents[agentId] = {
+              ...agent,
+              online: false,
+            };
+          }
+
+          return {
+            ...prev,
+            connected: false,
+            agents: nextAgents,
+          };
+        });
         if (shouldReconnect) {
           reconnectTimer = setTimeout(connect, 1500);
         }
@@ -95,6 +123,77 @@ export function useAgentStream() {
                 ? prev.activeFile
                 : normalizedFiles[0]?.name ?? null,
           }));
+
+          return;
+        }
+
+        if (isStageUpdateMessage(payload)) {
+          const now = new Date().toISOString();
+          const timelineEntry: TimelineEntry = {
+            stage: payload.stage,
+            message: `${payload.stage} started`,
+            time: now,
+          };
+
+          setState((prev) => {
+            const existingAgent = prev.agents[payload.agentId] || makeDefaultAgentState(payload.stage);
+            const updatedAgent: AgentMonitorState = {
+              ...existingAgent,
+              currentStage: payload.stage,
+              online: true,
+              timeline: [...existingAgent.timeline.slice(-299), timelineEntry],
+            };
+
+            return {
+              ...prev,
+              snapshot: {
+                ...prev.snapshot,
+                currentStage: payload.stage,
+              },
+              timeline: [...prev.timeline.slice(-299), timelineEntry],
+              agents: {
+                ...prev.agents,
+                [payload.agentId]: updatedAgent,
+              },
+            };
+          });
+
+          return;
+        }
+
+        if (isAgentLogMessage(payload)) {
+          const timelineEntry: TimelineEntry = {
+            stage: payload.stage,
+            message: payload.message,
+            time: new Date().toISOString(),
+          };
+
+          setState((prev) => {
+            const existing = prev.stageLogs[payload.stage] || [];
+            const nextLogsForStage = [...existing.slice(-119), payload.message];
+            const existingAgent = prev.agents[payload.agentId] || makeDefaultAgentState(payload.stage);
+            const nextAgentLogs = [...existingAgent.logs.slice(-119), payload.message];
+            const nextAgentTimeline = [...existingAgent.timeline.slice(-299), timelineEntry];
+
+            return {
+              ...prev,
+              stageLogs: {
+                ...prev.stageLogs,
+                [payload.stage]: nextLogsForStage,
+              },
+              timeline: [...prev.timeline.slice(-299), timelineEntry],
+              agents: {
+                ...prev.agents,
+                [payload.agentId]: {
+                  ...existingAgent,
+                  currentStage: payload.stage,
+                  logs: nextAgentLogs,
+                  timeline: nextAgentTimeline,
+                  online: true,
+                },
+              },
+            };
+          });
 
           return;
         }
@@ -224,6 +323,19 @@ interface JobPreviewMessage {
   files: PreviewFile[];
 }
 
+interface StageUpdateMessage {
+  type: "stage_update";
+  agentId: string;
+  stage: string;
+}
+
+interface AgentLogMessage {
+  type: "agent_log";
+  agentId: string;
+  stage: string;
+  message: string;
+}
+
 function isMonitorEnvelope(value: unknown): value is MonitorEnvelope {
   if (!value || typeof value !== "object") {
     return false;
@@ -240,4 +352,31 @@ function isJobPreviewMessage(value: unknown): value is JobPreviewMessage {
 
   const maybe = value as { type?: unknown; files?: unknown };
   return maybe.type === "job_preview" && Array.isArray(maybe.files);
+}
+
+function isStageUpdateMessage(value: unknown): value is StageUpdateMessage {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const maybe = value as { type?: unknown; agentId?: unknown; stage?: unknown };
+  return (
+    maybe.type === "stage_update" &&
+    typeof maybe.agentId === "string" &&
+    typeof maybe.stage === "string"
+  );
+}
+
+function isAgentLogMessage(value: unknown): value is AgentLogMessage {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const maybe = value as { type?: unknown; agentId?: unknown; stage?: unknown; message?: unknown };
+  return (
+    maybe.type === "agent_log" &&
+    typeof maybe.agentId === "string" &&
+    typeof maybe.stage === "string" &&
+    typeof maybe.message === "string"
+  );
 }

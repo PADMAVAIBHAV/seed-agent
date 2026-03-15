@@ -41,6 +41,19 @@ export interface PreviewFile {
   content: string;
 }
 
+export interface TimelineEntry {
+  stage: string;
+  message: string;
+  time: string;
+}
+
+export interface AgentMonitorState {
+  currentStage: string;
+  logs: string[];
+  timeline: TimelineEntry[];
+  online: boolean;
+}
+
 export interface MonitorState {
   connected: boolean;
   snapshot: MonitorSnapshot;
@@ -48,6 +61,9 @@ export interface MonitorState {
   jobs: JobHistoryItem[];
   files: PreviewFile[];
   activeFile: string | null;
+  stageLogs: Record<string, string[]>;
+  timeline: TimelineEntry[];
+  agents: Record<string, AgentMonitorState>;
 }
 
 export type ControlAction = "pause-polling" | "resume-polling" | "restart-agent";

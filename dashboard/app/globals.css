@@ -33,3 +33,91 @@ body {
   border: 1px solid rgba(255, 46, 196, 0.35);
   box-shadow: 0 0 22px rgba(255, 46, 196, 0.2);
 }
+
+.pipeline-stage {
+  position: relative;
+  min-width: 160px;
+  border-radius: 0.75rem;
+  border: 1px solid rgba(46, 230, 255, 0.2);
+  background: rgba(0, 4, 25, 0.7);
+  padding: 1rem;
+  text-align: center;
+  color: #cbd5e1;
+  transition: all 180ms ease;
+}
+
+.pipeline-stage:hover {
+  border-color: rgba(46, 230, 255, 0.45);
+  color: #2ee6ff;
+}
+
+.pipeline-stage:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(46, 230, 255, 0.55);
+}
+
+.pipeline-stage-idle {
+  opacity: 0.65;
+}
+
+.pipeline-stage-active {
+  border-color: rgba(132, 255, 97, 0.9);
+  background: rgba(132, 255, 97, 0.12);
+  color: #84ff61;
+  box-shadow: 0 0 18px rgba(132, 255, 97, 0.35);
+  animation: stagePulse 1.6s ease-in-out infinite;
+}
+
+.pipeline-stage-completed {
+  border-color: rgba(46, 230, 255, 0.9);
+  background: rgba(46, 230, 255, 0.16);
+  color: #2ee6ff;
+  opacity: 1;
+}
+
+.pipeline-stage-selected {
+  box-shadow: inset 0 0 0 1px rgba(255, 46, 196, 0.65), 0 0 12px rgba(255, 46, 196, 0.25);
+}
+
+.pipeline-connector {
+  position: relative;
+  width: 52px;
+  height: 3px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+
+.pipeline-connector.active {
+  background: linear-gradient(90deg, #00f0ff, #a855f7, #00f0ff);
+  background-size: 200% 100%;
+  box-shadow: 0 0 10px rgba(46, 230, 255, 0.35);
+  animation: pipelineFlow 1.5s linear infinite;
+}
+
+.pipeline-connector.completed {
+  background: linear-gradient(90deg, #2ee6ff, #84ff61);
+  box-shadow: 0 0 8px rgba(46, 230, 255, 0.25);
+}
+
+@keyframes pipelineFlow {
+  0% {
+    background-position: 0%;
+  }
+
+  100% {
+    background-position: 200%;
+  }
+}
+
+@keyframes stagePulse {
+  0%,
+  100% {
+    box-shadow: 0 0 14px rgba(132, 255, 97, 0.3);
+  }
+
+  50% {
+    box-shadow: 0 0 24px rgba(132, 255, 97, 0.55);
+  }
+}
