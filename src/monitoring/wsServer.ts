@@ -1,10 +1,13 @@
 import { WebSocketServer, WebSocket } from "ws";
+import { randomUUID } from "crypto";
 import type {
   AgentLifecycleEvent,
   DashboardControlMessage,
   DashboardControlAction,
 } from "../types/index.js";
 import { logger } from "../utils/logger.js";
+
+const AGENT_ID = process.env.AGENT_ID || `seed-agent-${randomUUID().slice(0, 6)}`;
 
 interface MonitorSnapshot {
   online: boolean;
@@ -21,13 +24,22 @@ interface MonitorSnapshot {
 
 interface MonitorOutboundMessage {
   kind: "event" | "snapshot";
+  agentId: string;
   event?: AgentLifecycleEvent;
   snapshot?: MonitorSnapshot;
 }
 
 interface StageUpdateMessage {
   type: "stage_update";
+  agentId: string;
   stage: "watcher" | "brain" | "critic" | "builder" | "packer" | "submit";
+}
+
+interface AgentLogMessage {
+  type: "agent_log";
+  agentId: string;
+  stage: "watcher" | "brain" | "critic" | "builder" | "packer" | "submit";
+  message: string;
 }
 
 function isControlMessage(data: unknown): data is DashboardControlMessage {
@@ -128,8 +140,17 @@ export class AgentMonitorWsServer {
 
   broadcastStageUpdate(stage: StageUpdateMessage["stage"]): void {
     this.snapshot.currentStage = stage;
-    this.broadcast({ type: "stage_update", stage });
+    this.broadcast({ type: "stage_update", agentId: AGENT_ID, stage });
     this.broadcastSnapshot();
+  }
+
+  broadcastAgentLog(stage: AgentLogMessage["stage"], message: string): void {
+    this.broadcast({
+      type: "agent_log",
+      agentId: AGENT_ID,
+      stage,
+      message,
+    });
   }
 
   applyLifecycleEvent(event: AgentLifecycleEvent): void {
@@ -182,13 +203,14 @@ export class AgentMonitorWsServer {
         break;
     }
 
-    this.broadcast({ kind: "event", event });
+    this.broadcast({ kind: "event", agentId: AGENT_ID, event });
     this.broadcastSnapshot();
   }
 
   private handleConnection(socket: WebSocket): void {
     this.send(socket, {
       kind: "snapshot",
+      agentId: AGENT_ID,
       snapshot: this.snapshot,
     });
 
@@ -209,10 +231,10 @@ export class AgentMonitorWsServer {
   }
 
   private broadcastSnapshot(): void {
-    this.broadcast({ kind: "snapshot", snapshot: this.snapshot });
+    this.broadcast({ kind: "snapshot", agentId: AGENT_ID, snapshot: this.snapshot });
   }
 
-  private broadcast(message: MonitorOutboundMessage | StageUpdateMessage): void {
+  private broadcast(message: MonitorOutboundMessage | StageUpdateMessage | AgentLogMessage): void {
     if (!this.wss) {
       return;
     }
@@ -224,7 +246,7 @@ export class AgentMonitorWsServer {
     }
   }
 
-  private send(socket: WebSocket, message: MonitorOutboundMessage | StageUpdateMessage): void {
+  private send(socket: WebSocket, message: MonitorOutboundMessage | StageUpdateMessage | AgentLogMessage): void {
     try {
       socket.send(JSON.stringify(message));
     } catch (error) {
